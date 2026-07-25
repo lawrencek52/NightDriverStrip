@@ -74,10 +74,8 @@ void EffectManager::StartEffect()
 
     auto effect = _tempEffect ? _tempEffect : _vEffects[_iCurrentEffect];
 
-    #if USE_HUB75
-        auto& matrix = static_cast<HUB75GFX&>(*_gfx[0]);
-        matrix.SetCaption(effect->FriendlyName(), CAPTION_TIME);
-    #endif
+    if (!_gfx.empty())
+        _gfx[0]->SetCaption(effect->FriendlyName(), CAPTION_TIME);
 
     // Zero the whites plane on every graphics device at effect-switch.
     //

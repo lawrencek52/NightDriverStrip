@@ -85,6 +85,9 @@ const char* DeviceConfig::DriverName(OutputDriver driver)
 {
     switch (driver)
     {
+        case OutputDriver::M5LCD:
+            return "m5lcd";
+
         case OutputDriver::HUB75:
             return "hub75";
 
@@ -121,6 +124,11 @@ bool DeviceConfig::IsHub75Build()
     return GetCompiledOutputDriver() == OutputDriver::HUB75;
 }
 
+bool DeviceConfig::IsFixedMatrixBuild()
+{
+    return IsHub75Build() || GetCompiledOutputDriver() == OutputDriver::M5LCD;
+}
+
 void DeviceConfig::LogRuntimeConfig(const char* reason) const
 {
     String activePins;
@@ -154,7 +162,7 @@ void DeviceConfig::LogRuntimeConfig(const char* reason) const
 
 DeviceConfig::DeviceConfig()
 {
-    runtimeTopology.serpentine = !IsHub75Build();
+    runtimeTopology.serpentine = !IsFixedMatrixBuild();
     runtimeOutputs.driver = GetCompiledOutputDriver();
     runtimeOutputs.channelCount = NUM_CHANNELS;
     runtimeOutputs.outputPins = GetCompiledWS281xPins();
@@ -311,6 +319,8 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
         const auto driverName = jsonObject[OutputDriverTag].as<String>();
         if (driverName == DriverName(OutputDriver::HUB75))
             updated.outputs.driver = OutputDriver::HUB75;
+        else if (driverName == DriverName(OutputDriver::M5LCD))
+            updated.outputs.driver = OutputDriver::M5LCD;
         else if (driverName == DriverName(OutputDriver::APA102))
             updated.outputs.driver = OutputDriver::APA102;
         else if (driverName == DriverName(OutputDriver::WS281x))

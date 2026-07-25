@@ -279,8 +279,8 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .ApiPath           = "outputs.driver",
             .Widget            = SettingSpec::WidgetKind::Select,
             .Options           = SettingSpec::OptionsSource::SchemaPath,
-            .OptionValues      = {"ws281x", "apa102", "hub75"},
-            .OptionLabels      = {"WS281x", "APA102", "HUB75"},
+            .OptionValues      = {"ws281x", "apa102", "hub75", "m5lcd"},
+            .OptionLabels      = {"WS281x", "APA102", "HUB75", "M5 LCD"},
             .OptionsSchemaPath = "outputs.allowedDrivers"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{

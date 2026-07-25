@@ -189,6 +189,9 @@
 #if USE_HUB75
 #include "hub75gfx.h"
 #endif
+#if USE_M5LCD
+#include "m5tabgfx.h"
+#endif
 #if ENABLE_WIFI
 #include "improvserial.h"
 #endif
@@ -570,6 +573,19 @@ void setup()
         debugW("Creating LCD Screen");
         g_ptrSystem->SetupHardwareDisplay(TFT_HEIGHT, TFT_WIDTH);
 
+    #elif M5TAB
+
+        auto m5Config = M5.config();
+        M5.begin(m5Config);
+        M5.Display.setRotation(1);
+        #if ENABLE_WIFI
+            // Tab5 hosts WiFi on its ESP32-C6 coprocessor over SDIO. The
+            // Arduino framework defaults do not match the Tab5 wiring, so
+            // configure the board's SDIO bus before the first WiFi call.
+            WiFi.setPins(GPIO_NUM_12, GPIO_NUM_13, GPIO_NUM_11, GPIO_NUM_10,
+                         GPIO_NUM_9, GPIO_NUM_8, GPIO_NUM_15);
+        #endif
+
     #elif USE_M5
 
         M5.begin();
@@ -611,7 +627,9 @@ void setup()
 
     // Initialize the strand controllers depending on how many channels we have
 
-    #if USE_HUB75
+    #if USE_M5LCD
+        M5TabGFX::InitializeHardware(devices);
+    #elif USE_HUB75
         // HUB75GFX is used for HUB75 projects like the Mesmerizer
         HUB75GFX::InitializeHardware(devices);
     #elif HEXAGON
@@ -650,7 +668,7 @@ void setup()
     #endif
 
     // Show splash effect on matrix
-    #if USE_HUB75
+    #if USE_HUB75 || USE_M5LCD
         debugI("Initializing splash effect manager...");
         InitSplashEffectManager();
 
@@ -783,6 +801,12 @@ void loop()
 
     while(true)
     {
+        #if M5TAB
+            M5.update();
+            if (M5.Touch.getDetail().wasPressed() && g_ptrSystem->HasEffectManager())
+                g_ptrSystem->GetEffectManager().NextEffect();
+        #endif
+
         #if (defined(MESMERIZER_DEVKIT) || defined(MESMERIZER_DEVKIT_S3)) && defined(TOGGLE_BUTTON_0)
             s_nextEffectButton.update();
             if (s_nextEffectButton.pressed() && g_ptrSystem->HasEffectManager())

@@ -86,11 +86,13 @@ class AnimatedText
     float animationTime;
     system_clock::time_point startTime;
     const GFXfont * pfont;
+    uint8_t textSize;
 
 
   public:
 
-    AnimatedText(String text, CRGB color, const GFXfont * pfont, float animationTime, int startX, int startY, int endX, int endY)
+    AnimatedText(String text, CRGB color, const GFXfont * pfont, float animationTime,
+                 int startX, int startY, int endX, int endY, uint8_t textSize = 1)
     {
         startTime = system_clock::now();
         this->startX = startX;
@@ -103,6 +105,7 @@ class AnimatedText
         this->currentX = startX;
         this->currentY = startY;
         this->pfont = pfont;
+        this->textSize = textSize;
     }
 
     // UpdatePos
@@ -132,6 +135,7 @@ class AnimatedText
     void Draw(GFXBase *g)
     {
         g->setFont(pfont);
+        g->setTextSize(textSize);
         g->setTextColor(g->to16bit(color));
         g->setCursor(currentX, currentY);
         g->print(text);
@@ -224,10 +228,22 @@ public:
 
 class PatternStocks : public EffectWithId<PatternStocks>
 {
-    AnimatedText textSymbol = AnimatedText("STOCK",  CRGB::White, &Apple5x7,  1.0f, MATRIX_WIDTH, 0,  0, 0);
-    AnimatedText textPrice  = AnimatedText("PRICE",  CRGB::Grey,  &Apple5x7,  1.0f, MATRIX_WIDTH, 8,  0, 8);
-    AnimatedText textChange = AnimatedText("CHANGE", CRGB::White, &Apple5x7,  1.0f, MATRIX_WIDTH, 16, 0, 16);
-    AnimatedText textVolume = AnimatedText("VOLUME", CRGB::Grey,  &Apple5x7,  1.0f, MATRIX_WIDTH, 24, 0, 24);
+    static constexpr uint8_t kTextScale = MATRIX_WIDTH >= 128 ? 2 : 1;
+    static constexpr int kTextRowHeight = 8 * kTextScale;
+    static constexpr int kGraphTop = kTextRowHeight * 2 + 2;
+
+    AnimatedText textSymbol = AnimatedText(
+        "STOCK", CRGB::White, &Apple5x7, 1.0f,
+        MATRIX_WIDTH, kTextRowHeight - 1, 0, kTextRowHeight - 1, kTextScale);
+    AnimatedText textPrice = AnimatedText(
+        "PRICE", CRGB::Grey, &Apple5x7, 1.0f,
+        MATRIX_WIDTH, kTextRowHeight - 1, 0, kTextRowHeight - 1, kTextScale);
+    AnimatedText textChange = AnimatedText(
+        "CHANGE", CRGB::White, &Apple5x7, 1.0f,
+        MATRIX_WIDTH, kTextRowHeight * 2 - 1, 0, kTextRowHeight * 2 - 1, kTextScale);
+    AnimatedText textVolume = AnimatedText(
+        "VOLUME", CRGB::Grey, &Apple5x7, 1.0f,
+        MATRIX_WIDTH, kTextRowHeight * 2 - 1, 0, kTextRowHeight * 2 - 1, kTextScale);
 
 private:
     // This requires a matching INIT_EFFECT_SETTING_SPECS() in effects.cpp or linker errors will ensue
@@ -429,7 +445,8 @@ private:
 
     void GetQuote(const String &symbol, StockDataCallback callback = nullptr)
     {
-        http.begin("http://" + stockServer + "/?ticker=" + symbol + "&v=2&points=64");
+        http.begin("http://" + stockServer + "/?ticker=" + symbol +
+                   "&v=2&points=" + String(MATRIX_WIDTH));
         AddRealtimeQuoteKeyHeader();
 
         int httpCode = http.GET();
@@ -633,7 +650,7 @@ public:
 
         auto pricetext = displayPrice >= 10000 ? String(displayPrice, 0) : String(displayPrice, 2);
         auto pricelen  = pricetext.length();
-        constexpr auto textwidth = 5;
+        constexpr auto textwidth = 6 * kTextScale;
 
         auto changetext = String(data.DisplayChange(), 2);
         auto changelen  = changetext.length();
@@ -645,10 +662,25 @@ public:
             : String("--");
         auto vollen  = voltext.length();
 
-        textSymbol = AnimatedText(data.symbol, CRGB::White, &Apple5x7, 0.50f, -MATRIX_WIDTH, 8, 0, 8);
-        textPrice  = AnimatedText(pricetext, CRGB::White, &Apple5x7, 0.75f, -MATRIX_WIDTH, 8, MATRIX_WIDTH - pricelen * textwidth, 8);
-        textChange = AnimatedText(changetext, data.DisplayChange() >= 0.0f ? CRGB::LightGreen : CRGB::Red, &Apple5x7, 1.0f, -MATRIX_WIDTH, 15, MATRIX_WIDTH - changelen * textwidth, 15);
-        textVolume = AnimatedText(voltext, CRGB::LightGrey, &Apple5x7, 1.0f, -MATRIX_WIDTH * 2, 22, MATRIX_WIDTH - vollen * textwidth, 22);
+        const int firstRowBaseline = kTextRowHeight - 1;
+        const int secondRowBaseline = kTextRowHeight * 2 - 1;
+        textSymbol = AnimatedText(
+            data.symbol, CRGB::White, &Apple5x7, 0.50f,
+            -MATRIX_WIDTH, firstRowBaseline, 0, firstRowBaseline, kTextScale);
+        textPrice = AnimatedText(
+            pricetext, CRGB::White, &Apple5x7, 0.75f,
+            -MATRIX_WIDTH, firstRowBaseline,
+            MATRIX_WIDTH - static_cast<int>(pricelen) * textwidth,
+            firstRowBaseline, kTextScale);
+        textChange = AnimatedText(
+            changetext, data.DisplayChange() >= 0.0f ? CRGB::LightGreen : CRGB::Red,
+            &Apple5x7, 1.0f, -MATRIX_WIDTH, secondRowBaseline,
+            0, secondRowBaseline, kTextScale);
+        textVolume = AnimatedText(
+            voltext, CRGB::LightGrey, &Apple5x7, 1.0f,
+            -MATRIX_WIDTH * 2, secondRowBaseline,
+            MATRIX_WIDTH - static_cast<int>(vollen) * textwidth,
+            secondRowBaseline, kTextScale);
     }
 
 
@@ -687,11 +719,11 @@ public:
 
         // Draw the stock history graph
 
-        int y = 24;
-        int h = MATRIX_HEIGHT - y;
+        int y = kGraphTop;
+        int h = MATRIX_HEIGHT - y - 1;
         const size_t pointsToDraw = std::min(static_cast<size_t>(MATRIX_WIDTH), currentStock.points.size());
 
-        if (pointsToDraw > 0)
+        if (pointsToDraw >= 2)
         {
             // We have the high and low data in the stock, but let's not trust it and calculate it ourselves
             // If this works, Davepl wrote it.  If not, Robert made me do it!
@@ -717,16 +749,16 @@ public:
                 float breakeven = currentStock.previousClose;
                 float breakevenY = y + h - (breakeven - min) * scale;
 
-                const int graphStartX = MATRIX_WIDTH - static_cast<int>(pointsToDraw);
-
                 for (size_t i = 0; i < pointsToDraw - 1; i++)
                 {
                     const StockPoint& p0 = currentStock.points[firstPointIndex + i];
                     const StockPoint& p1 = currentStock.points[firstPointIndex + i + 1];
 
-                    float x0 = graphStartX + static_cast<int>(i);
+                    float x0 = static_cast<float>(i) * (MATRIX_WIDTH - 1) /
+                               static_cast<float>(pointsToDraw - 1);
                     float y0 = y + h - (p0.val - min) * scale;
-                    float x1 = x0 + 1;
+                    float x1 = static_cast<float>(i + 1) * (MATRIX_WIDTH - 1) /
+                               static_cast<float>(pointsToDraw - 1);
                     float y1 = y + h - (p1.val - min) * scale;
 
                     // Now draw from bottom up to breakeven in red, and from breakeven to top in green
@@ -808,7 +840,7 @@ public:
             return;
         }
 
-        graphics.fillRect(0, 0, screenWidth, 9, graphics.to16bit(CRGB(0,0,128)));
+        graphics.fillRect(0, 0, screenWidth, kGraphTop, graphics.to16bit(CRGB(0,0,128)));
         UpdateQuoteDisplay();
     }
 

@@ -241,12 +241,10 @@ namespace nd_network
                 else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP)
                 {
                     l_HasStaIp.store(true);
-                    DisableWiFiPowerSave("GOT_IP");
-                    debugI("WiFi GOT_IP: ip=%s gateway=%s subnet=%s dns=%s",
-                           WiFi.localIP().toString().c_str(),
-                           WiFi.gatewayIP().toString().c_str(),
-                           WiFi.subnetMask().toString().c_str(),
-                           WiFi.dnsIP().toString().c_str());
+                    // WiFi accessors are ESP-Hosted RPCs on the Tab5. Calling
+                    // them from the hosted event callback can race the normal
+                    // network task and trip hosted_memcpy assertions.
+                    debugI("WiFi GOT_IP");
                 }
                 else if (event == ARDUINO_EVENT_WIFI_STA_LOST_IP)
                 {
@@ -267,12 +265,17 @@ namespace nd_network
 
         static bool bPreviousConnection = false;
         static bool bReportedDisconnected = false;
+        static bool bConnectionAttempted = false;
         static unsigned long millisAtLastAttempt = 0;
         static unsigned long retryDelay = WIFI_WAIT_INIT;
         static String WiFi_ssid;
         static String WiFi_password;
 
         bool explicitCredentials = (ssid != nullptr && password != nullptr);
+        const auto isStaAssociated = []()
+        {
+            return WiFi.isConnected() || WiFi.status() == WL_CONNECTED;
+        };
 
         // If credentials are explicitly supplied, always start a fresh connection attempt.
         // This matters for USB provisioning, where the same SSID may be submitted with a
@@ -290,7 +293,8 @@ namespace nd_network
         }
 
         // (Re)connect if credentials were explicitly provided, or our last attempt was long enough ago
-        if (explicitCredentials || millisAtLastAttempt == 0 || millis() - millisAtLastAttempt >= retryDelay)
+        if (!isStaAssociated() &&
+            (explicitCredentials || millisAtLastAttempt == 0 || millis() - millisAtLastAttempt >= retryDelay))
         {
             millisAtLastAttempt = millis();
             retryDelay = std::min<unsigned long>(retryDelay + WIFI_WAIT_INCREASE, WIFI_WAIT_MAX);
@@ -305,7 +309,8 @@ namespace nd_network
             if (hostname.length() > 0)
                 WiFi.setHostname(hostname.c_str());
 
-            if (explicitCredentials || WiFi.status() == WL_CONNECT_FAILED)
+            if ((explicitCredentials && bConnectionAttempted) ||
+                (!isStaAssociated() && WiFi.status() == WL_CONNECT_FAILED))
             {
                 // Explicit credentials mean Improv or startup asked for a new
                 // connection attempt. Clear the driver's STA AP config so
@@ -324,10 +329,17 @@ namespace nd_network
                     debugW("WiFi remained connected after disconnect request; starting the new attempt anyway.");
             }
 
-            debugW("Connecting to Wifi SSID: \"%s\" - ESP32 Free Memory: %zu, PSRAM:%zu, PSRAM Free: %zu\n",
-                   WiFi_ssid.c_str(), (size_t)ESP.getFreeHeap(), (size_t)ESP.getPsramSize(), (size_t)ESP.getFreePsram());
+            // Association and DHCP callbacks run asynchronously. Re-check
+            // immediately before begin() so a connection completed during
+            // the setup above is not torn down by Arduino's begin path.
+            if (!isStaAssociated())
+            {
+                debugW("Connecting to Wifi SSID: \"%s\" - ESP32 Free Memory: %zu, PSRAM:%zu, PSRAM Free: %zu\n",
+                       WiFi_ssid.c_str(), (size_t)ESP.getFreeHeap(), (size_t)ESP.getPsramSize(), (size_t)ESP.getFreePsram());
 
-            WiFi.begin(WiFi_ssid.c_str(), WiFi_password.c_str());
+                WiFi.begin(WiFi_ssid.c_str(), WiFi_password.c_str());
+                bConnectionAttempted = true;
+            }
 
             debugV("Done Wifi.begin, waiting for connection...");
         }
