@@ -265,7 +265,6 @@ namespace nd_network
 
         static bool bPreviousConnection = false;
         static bool bReportedDisconnected = false;
-        static bool bConnectionAttempted = false;
         static unsigned long millisAtLastAttempt = 0;
         static unsigned long retryDelay = WIFI_WAIT_INIT;
         static String WiFi_ssid;
@@ -293,8 +292,9 @@ namespace nd_network
         }
 
         // (Re)connect if credentials were explicitly provided, or our last attempt was long enough ago
-        if (!isStaAssociated() &&
-            (explicitCredentials || millisAtLastAttempt == 0 || millis() - millisAtLastAttempt >= retryDelay))
+        if (explicitCredentials ||
+            (!isStaAssociated() &&
+             (millisAtLastAttempt == 0 || millis() - millisAtLastAttempt >= retryDelay)))
         {
             millisAtLastAttempt = millis();
             retryDelay = std::min<unsigned long>(retryDelay + WIFI_WAIT_INCREASE, WIFI_WAIT_MAX);
@@ -309,7 +309,7 @@ namespace nd_network
             if (hostname.length() > 0)
                 WiFi.setHostname(hostname.c_str());
 
-            if ((explicitCredentials && bConnectionAttempted) ||
+            if (explicitCredentials ||
                 (!isStaAssociated() && WiFi.status() == WL_CONNECT_FAILED))
             {
                 // Explicit credentials mean Improv or startup asked for a new
@@ -332,13 +332,12 @@ namespace nd_network
             // Association and DHCP callbacks run asynchronously. Re-check
             // immediately before begin() so a connection completed during
             // the setup above is not torn down by Arduino's begin path.
-            if (!isStaAssociated())
+            if (explicitCredentials || !isStaAssociated())
             {
                 debugW("Connecting to Wifi SSID: \"%s\" - ESP32 Free Memory: %zu, PSRAM:%zu, PSRAM Free: %zu\n",
                        WiFi_ssid.c_str(), (size_t)ESP.getFreeHeap(), (size_t)ESP.getPsramSize(), (size_t)ESP.getFreePsram());
 
                 WiFi.begin(WiFi_ssid.c_str(), WiFi_password.c_str());
-                bConnectionAttempted = true;
             }
 
             debugV("Done Wifi.begin, waiting for connection...");

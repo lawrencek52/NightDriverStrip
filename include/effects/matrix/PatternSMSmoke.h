@@ -87,20 +87,27 @@ public:
       // g().SetNoise(1, 1, 1, 4, 4);
     }
 
-    // At larger logical resolutions, doing both full-frame warps and both
-    // blur directions before every scanout needlessly halves the display
-    // rate. Alternate axes, doubling the displacement and blur strength so
-    // the accumulated smoke motion remains comparable over two frames.
-    horizontalPass = !horizontalPass;
-    if (horizontalPass)
+    if (WIDTH <= 64 && HEIGHT <= 32)
     {
-      g().MoveFractionalNoiseX(2);
-      g().blurRows(g().leds, WIDTH, HEIGHT, 0, 20);
+      g().MoveFractionalNoiseX(1);
+      g().MoveFractionalNoiseY(1);
+      g().blurRows(g().leds, WIDTH, HEIGHT, 0, 10);
+      g().blurColumns(g().leds, WIDTH, HEIGHT, 1, 10);
     }
     else
     {
-      g().MoveFractionalNoiseY(2);
-      g().blurColumns(g().leds, WIDTH, HEIGHT, 1, 20);
+      // Alternate axes on large logical surfaces to keep scanout responsive.
+      horizontalPass = !horizontalPass;
+      if (horizontalPass)
+      {
+        g().MoveFractionalNoiseX(2);
+        g().blurRows(g().leds, WIDTH, HEIGHT, 0, 20);
+      }
+      else
+      {
+        g().MoveFractionalNoiseY(2);
+        g().blurColumns(g().leds, WIDTH, HEIGHT, 1, 20);
+      }
     }
   }
 };

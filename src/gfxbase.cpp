@@ -68,6 +68,7 @@ const uint8_t GFXBase::gamma6[64] =
 
 GFXBase::~GFXBase()
 {
+    heap_caps_free(_blurColumnScratch);
 }
 
 uint8_t GFXBase::beatcos8(accum88 beats_per_minute, uint8_t lowest, uint8_t highest, uint32_t timebase, uint8_t phase_offset)
@@ -615,12 +616,19 @@ void GFXBase::blurColumns(CRGB *leds, uint16_t width, uint16_t height, uint16_t 
         // Keeping one carry value per column lets us traverse both source and
         // destination rows sequentially. The former column-at-a-time walk
         // incurred a PSRAM cache miss for nearly every pixel at 1280x720.
-        CRGB *scratch = static_cast<CRGB *>(
-            heap_caps_calloc(width * 2U, sizeof(CRGB), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-        if (!scratch)
-            throw std::runtime_error("Unable to allocate native blur scratch rows");
-        CRGB *carry = scratch;
-        CRGB *pending = scratch + width;
+        if (_blurColumnScratchWidth < width)
+        {
+            CRGB *scratch = static_cast<CRGB *>(
+                heap_caps_calloc(width * 2U, sizeof(CRGB), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            if (!scratch)
+                throw std::runtime_error("Unable to allocate native blur scratch rows");
+            heap_caps_free(_blurColumnScratch);
+            _blurColumnScratch = scratch;
+            _blurColumnScratchWidth = width;
+        }
+        CRGB *carry = _blurColumnScratch;
+        CRGB *pending = _blurColumnScratch + _blurColumnScratchWidth;
+        memset(carry, 0, width * sizeof(CRGB));
 
         const uint8_t keep = 255 - blur_amount;
         const uint8_t seep = blur_amount >> 1;
@@ -651,7 +659,6 @@ void GFXBase::blurColumns(CRGB *leds, uint16_t width, uint16_t height, uint16_t 
         }
         if (first < height)
             memcpy(leds + static_cast<size_t>(height - 1) * width, pending, width * sizeof(CRGB));
-        heap_caps_free(scratch);
         return;
     }
 

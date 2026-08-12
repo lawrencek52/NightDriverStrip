@@ -114,7 +114,7 @@ public:
                         (static_cast<uint32_t>(quadwave8(phase)) * maxY + 127) / 255);
                     const CRGB color = graphics.ColorFromCurrentPalette(x + hue);
 
-                    if (previousY >= 0)
+                    if (previousY >= 0 && (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
                         graphics.drawLine(x - 1, previousY, x, y, color);
                     else
                         graphics.setPixel(x, y, color);
@@ -123,7 +123,8 @@ public:
                     if (waveCount == 2)
                     {
                         const int mirrorY = maxY - y;
-                        if (previousMirrorY >= 0)
+                        if (previousMirrorY >= 0 &&
+                            (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
                             graphics.drawLine(
                                 x - 1, previousMirrorY, x, mirrorY, color);
                         else
@@ -146,7 +147,7 @@ public:
                         (static_cast<uint32_t>(quadwave8(phase)) * maxX + 127) / 255);
                     const CRGB color = graphics.ColorFromCurrentPalette(y + hue);
 
-                    if (previousX >= 0)
+                    if (previousX >= 0 && (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
                         graphics.drawLine(previousX, y - 1, x, y, color);
                     else
                         graphics.setPixel(x, y, color);
@@ -155,7 +156,8 @@ public:
                     if (waveCount == 2)
                     {
                         const int mirrorX = maxX - x;
-                        if (previousMirrorX >= 0)
+                        if (previousMirrorX >= 0 &&
+                            (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
                             graphics.drawLine(
                                 previousMirrorX, y - 1, mirrorX, y, color);
                         else

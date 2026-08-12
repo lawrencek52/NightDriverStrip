@@ -15,6 +15,12 @@
 #include "systemcontainer.h"
 #include "values.h"
 
+namespace
+{
+constexpr uint32_t kCaptionFadeInTime = 500;
+constexpr uint32_t kCaptionFadeOutTime = 1000;
+}
+
 M5TabGFX::M5TabGFX(size_t width, size_t height) : GFXBase(width, height)
 {
     leds = static_cast<CRGB *>(heap_caps_calloc(width * height, sizeof(CRGB), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -78,8 +84,11 @@ void M5TabGFX::fillRectangle(int x0, int y0, int x1, int y1, CRGB color)
 {
     x0 = std::max(0, x0);
     y0 = std::max(0, y0);
-    x1 = std::min(static_cast<int>(_width), x1);
-    y1 = std::min(static_cast<int>(_height), y1);
+    x1 = std::clamp(x1, 0, static_cast<int>(_width));
+    y1 = std::clamp(y1, 0, static_cast<int>(_height));
+
+    if (x0 >= x1 || y0 >= y1)
+        return;
 
     for (int y = y0; y < y1; ++y)
         std::fill(leds + y * _width + x0, leds + y * _width + x1, color);
@@ -94,16 +103,14 @@ void M5TabGFX::SetCaption(const String &caption, uint32_t duration)
 
 float M5TabGFX::CaptionTransparency() const
 {
-    constexpr uint32_t kFadeInTime = 500;
-    constexpr uint32_t kFadeOutTime = 1000;
     const uint32_t elapsed = millis() - _captionStartTime;
-    if (_caption.isEmpty() || elapsed >= kFadeInTime + _captionDuration + kFadeOutTime)
+    if (_caption.isEmpty() || elapsed >= kCaptionFadeInTime + _captionDuration + kCaptionFadeOutTime)
         return 0.0f;
-    if (elapsed < kFadeInTime)
-        return static_cast<float>(elapsed) / kFadeInTime;
-    if (elapsed > kFadeInTime + _captionDuration)
+    if (elapsed < kCaptionFadeInTime)
+        return static_cast<float>(elapsed) / kCaptionFadeInTime;
+    if (elapsed > kCaptionFadeInTime + _captionDuration)
         return 1.0f -
-            static_cast<float>(elapsed - kFadeInTime - _captionDuration) / kFadeOutTime;
+            static_cast<float>(elapsed - kCaptionFadeInTime - _captionDuration) / kCaptionFadeOutTime;
     return 1.0f;
 }
 
@@ -129,9 +136,8 @@ void M5TabGFX::PostProcessFrame(size_t localPixelsDrawn, size_t wifiPixelsDrawn)
     const int captionY = static_cast<int>(_height) - kCaptionHeight - 1;
     if (captionAlpha > 0.0f)
     {
-        constexpr uint32_t kFadeInTime = 500;
-        constexpr uint32_t kFadeOutTime = 1000;
-        const uint32_t totalCaptionTime = kFadeInTime + _captionDuration + kFadeOutTime;
+        const uint32_t totalCaptionTime =
+            kCaptionFadeInTime + _captionDuration + kCaptionFadeOutTime;
         const uint32_t elapsed = millis() - _captionStartTime;
         const int textWidth = _caption.length() * 6;
         const int x = textWidth > static_cast<int>(_width)

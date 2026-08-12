@@ -154,23 +154,23 @@ private:
             }
         }
 
-        void move(uint8_t distance)
+        void move(uint8_t horizontalDistance, uint8_t verticalDistance)
         {
             switch (direction)
             {
             case UP:
-                pixels[0].y = (pixels[0].y + distance) % MATRIX_HEIGHT;
+                pixels[0].y = (pixels[0].y + verticalDistance) % MATRIX_HEIGHT;
                 break;
             case LEFT:
-                pixels[0].x = (pixels[0].x + distance) % MATRIX_WIDTH;
+                pixels[0].x = (pixels[0].x + horizontalDistance) % MATRIX_WIDTH;
                 break;
             case DOWN:
                 pixels[0].y =
-                    (pixels[0].y + MATRIX_HEIGHT - distance % MATRIX_HEIGHT) % MATRIX_HEIGHT;
+                    (pixels[0].y + MATRIX_HEIGHT - verticalDistance % MATRIX_HEIGHT) % MATRIX_HEIGHT;
                 break;
             case RIGHT:
                 pixels[0].x =
-                    (pixels[0].x + MATRIX_WIDTH - distance % MATRIX_WIDTH) % MATRIX_WIDTH;
+                    (pixels[0].x + MATRIX_WIDTH - horizontalDistance % MATRIX_WIDTH) % MATRIX_WIDTH;
                 break;
             }
         }
@@ -226,8 +226,11 @@ public:
         // fill_palette(colors, SNAKE_LENGTH, initialHue++, 5, graphics.currentPalette, 255, LINEARBLEND);
         fill_palette(colors, SNAKE_LENGTH, 0, 4, ForestColors_p, 255, LINEARBLEND);
         constexpr uint8_t kReferenceMatrixWidth = 64;
-        constexpr uint8_t kMovementStep =
+        constexpr uint8_t kReferenceMatrixHeight = 32;
+        constexpr uint8_t kHorizontalMovementStep =
             std::max(1, (MATRIX_WIDTH + kReferenceMatrixWidth / 2) / kReferenceMatrixWidth);
+        constexpr uint8_t kVerticalMovementStep =
+            std::max(1, (MATRIX_HEIGHT + kReferenceMatrixHeight / 2) / kReferenceMatrixHeight);
         for (int i = 0; i < snakeCount; i++)
         {
             Path *path = &snakes[i];
@@ -239,7 +242,7 @@ public:
                 path->newDirection();
             }
 
-            path->move(kMovementStep);
+            path->move(kHorizontalMovementStep, kVerticalMovementStep);
             path->draw(g(), colors);
         }
     }

@@ -291,12 +291,24 @@ public:
         uint16_t gifWidth = gif->second._width;
         uint16_t gifHeight = gif->second._height;
 
-        // Map the complete GIF canvas to the complete matrix canvas. GIF
-        // assets were authored for several small aspect ratios (32x32,
-        // 64x32, 64x12); independent axes ensure every one fills modern
-        // widescreen matrices instead of remaining letterboxed.
-        const float scaleX = static_cast<float>(MATRIX_WIDTH) / gifWidth;
-        const float scaleY = static_cast<float>(MATRIX_HEIGHT) / gifHeight;
+        float scaleX;
+        float scaleY;
+        if (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32)
+        {
+            // Large framebuffer builds need to use the available surface.
+            scaleX = static_cast<float>(MATRIX_WIDTH) / gifWidth;
+            scaleY = static_cast<float>(MATRIX_HEIGHT) / gifHeight;
+        }
+        else
+        {
+            // Preserve the original small-panel behavior: only downscale,
+            // retain aspect ratio, and center the result.
+            const float scale = std::min(
+                1.0f, std::min(static_cast<float>(MATRIX_WIDTH) / gifWidth,
+                               static_cast<float>(MATRIX_HEIGHT) / gifHeight));
+            scaleX = scale;
+            scaleY = scale;
+        }
 
         // Calculate the destination dimensions after scaling
         uint16_t dstWidth = (uint16_t)(gifWidth * scaleX);

@@ -134,6 +134,8 @@ protected:
     size_t _height;
     size_t _ledcount;
     bool _serpentine = true;
+    CRGB *_blurColumnScratch = nullptr;
+    size_t _blurColumnScratchWidth = 0;
 
     // 32 Entries in the 5-bit gamma table
     static const uint8_t gamma5[32];
