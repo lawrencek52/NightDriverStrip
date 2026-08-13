@@ -32,6 +32,11 @@
 #include <esp_ota_ops.h>
 #include <fcntl.h>
 
+#if ENABLE_ESPNOW
+    #include <esp_arduino_version.h>
+    #include <esp_now.h>
+#endif
+
 #if ENABLE_WIFI
     #include <algorithm>
     #include <ArduinoOTA.h>
@@ -744,7 +749,11 @@ namespace nd_network
 // Global Support Helpers
 
 #if ENABLE_ESPNOW
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+void onReceiveESPNOW(const esp_now_recv_info_t *, const uint8_t *data, int dataLen)
+#else
 void onReceiveESPNOW(const uint8_t *macAddr, const uint8_t *data, int dataLen)
+#endif
 {
     struct Message { uint8_t cbSize; uint8_t command; uint32_t arg1; } __attribute__((packed));
     Message message;

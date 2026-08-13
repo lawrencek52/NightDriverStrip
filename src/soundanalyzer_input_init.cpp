@@ -65,8 +65,8 @@ void SoundAnalyzerBase::InitI2S_Modern()
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
-            .bclk = I2S_BCLK_PIN,
-            .ws = I2S_WS_PIN,
+            .bclk = static_cast<gpio_num_t>(I2S_BCLK_PIN),
+            .ws = static_cast<gpio_num_t>(I2S_WS_PIN),
             .dout = I2S_GPIO_UNUSED,
             .din = static_cast<gpio_num_t>(audioInputPin),
         },
