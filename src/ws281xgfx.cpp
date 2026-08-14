@@ -283,7 +283,7 @@ void WS281xGFX::InitializeHardware(std::vector<std::shared_ptr<GFXBase>>& device
 //
 // PostProcessFrame sends the data to the LED strip.  If it's fewer than the size of the strip, we only send that many.
 
-void WS281xGFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
+void WS281xGFX::PostProcessFrame(size_t localPixelsDrawn, size_t wifiPixelsDrawn)
 {
     auto pixelsDrawn = wifiPixelsDrawn > 0 ? wifiPixelsDrawn : localPixelsDrawn;
 

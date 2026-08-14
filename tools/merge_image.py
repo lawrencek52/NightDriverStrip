@@ -1,4 +1,6 @@
 import os
+import re
+import subprocess
 
 Import("env")
 
@@ -49,6 +51,23 @@ def merge_bin(target, source, env):
 
     print(f"Creating merged image: {merged_image}")
 
+    # esptool 5 renamed commands and long options from underscores to hyphens.
+    # Detect the bundled tool at build time so older platform environments can
+    # continue using the legacy spelling without producing warnings on v5.
+    version_result = subprocess.run(
+        [env.subst("${PYTHONEXE}"), env.subst("${OBJCOPY}"), "version"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    version_match = re.search(r"(?:esptool v)?(\d+)(?:\.\d+)+", version_result.stdout)
+    modern_cli = version_match is not None and int(version_match.group(1)) >= 5
+
+    merge_command = "merge-bin" if modern_cli else "merge_bin"
+    flash_size_option = "--flash-size" if modern_cli else "--flash_size"
+    flash_mode_option = "--flash-mode" if modern_cli else "--flash_mode"
+    flash_freq_option = "--flash-freq" if modern_cli else "--flash_freq"
+
     # Run esptool to merge images into a single binary.
     env.Execute(
         " ".join(
@@ -57,12 +76,12 @@ def merge_bin(target, source, env):
                 "${OBJCOPY}",
                 "--chip",
                 board_config.get("build.mcu", "esp32"),
-                "merge_bin",
-                "--flash_size",
+                merge_command,
+                flash_size_option,
                 board_config.get("upload.flash_size", "4MB"),
-                "--flash_mode",
+                flash_mode_option,
                 flash_mode,
-                "--flash_freq",
+                flash_freq_option,
                 flash_freq,
                 "-o",
                 merged_image,

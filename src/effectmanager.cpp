@@ -64,7 +64,7 @@ extern DRAM_ATTR bool l_EffectManagerInitializing;
 // EffectManager initialization functions
 //
 
-#if USE_HUB75
+#if USE_HUB75 || USE_M5LCD
 
     void InitSplashEffectManager()
     {

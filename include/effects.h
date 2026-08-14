@@ -92,5 +92,5 @@ using FactoryId = uint64_t;
 #if EFFECTS_FULLMATRIX
 // Configure the shared TJpg_Decoder output callback before any matrix effect
 // (including the early boot splash) attempts to decode an embedded JPEG.
-void ConfigureMatrixJpegDecoder();
+void ConfigureMatrixJpegDecoder(uint16_t sourceWidth = 0, uint16_t sourceHeight = 0);
 #endif

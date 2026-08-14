@@ -316,7 +316,7 @@ class ColorFillEffect : public EffectWithId<ColorFillEffect>
     }
 };
 
-#if USE_HUB75
+#if USE_HUB75 || USE_M5LCD
 
 // SplashLogoEffect
 //
@@ -360,12 +360,20 @@ class SplashLogoEffect : public EffectWithId<SplashLogoEffect>
     void Draw() override
     {
         fillSolidOnAllChannels(CRGB::Black);
-        if (JDR_OK != TJpgDec.drawJpg(0, 0, logo.contents, logo.length))        // Draw the image
+
+        uint16_t logoWidth = 0;
+        uint16_t logoHeight = 0;
+        if (JDR_OK == TJpgDec.getJpgSize(&logoWidth, &logoHeight, logo.contents, logo.length))
+            ConfigureMatrixJpegDecoder(logoWidth, logoHeight);
+
+        const auto drawResult = TJpgDec.drawJpg(0, 0, logo.contents, logo.length);
+        ConfigureMatrixJpegDecoder();
+        if (JDR_OK != drawResult)
             debugW("Could not display logo");
     }
 };
 
-#endif // USE_HUB75
+#endif // USE_HUB75 || USE_M5LCD
 
 // StatusEffect
 //

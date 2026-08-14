@@ -57,7 +57,9 @@ size_t SoundAnalyzerBase::SampleI2S_Modern()
         if (i * kChannels >= (bytesRead / 4))
             break;
         int32_t s32 = tempBuffer[i * kChannels]; // Left channel
-        ptrSampleBuffer[i] = (int16_t)std::clamp(s32 >> 15, -32768, 32767);
+        const int32_t scaled = s32 >> 15;
+        ptrSampleBuffer[i] = static_cast<int16_t>(
+            std::clamp(scaled, static_cast<int32_t>(INT16_MIN), static_cast<int32_t>(INT16_MAX)));
     }
     bytesReadTotal = bytesRead / kChannels / 2; // Rough approximation of output samples converted to bytes
 #endif

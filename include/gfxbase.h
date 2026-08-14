@@ -118,7 +118,7 @@ constexpr static inline uint8_t WU_WEIGHT(uint8_t a, uint8_t b)
 
 class Boid;
 
-uint16_t XY(uint16_t x, uint16_t y);
+size_t XY(uint16_t x, uint16_t y);
 
 class GFXBase : public Adafruit_GFX
 {
@@ -134,6 +134,8 @@ protected:
     size_t _height;
     size_t _ledcount;
     bool _serpentine = true;
+    CRGB *_blurColumnScratch = nullptr;
+    size_t _blurColumnScratchWidth = 0;
 
     // 32 Entries in the 5-bit gamma table
     static const uint8_t gamma5[32];
@@ -314,7 +316,7 @@ public:
     // in the XY() function of your class
 
     __attribute__((always_inline))
-    inline virtual uint16_t xy(uint16_t x, uint16_t y) const noexcept
+    inline virtual size_t xy(uint16_t x, uint16_t y) const noexcept
     {
         if (_serpentine && (x & 0x01))
         {
@@ -614,6 +616,7 @@ public:
         void SetNoise(uint32_t nx, uint32_t ny, uint32_t nz, uint32_t sx, uint32_t sy);
 
         void FillGetNoise() const;
+        void FillGetNoiseEdges() const;
 
     private:
         // Called only from within EnsureNoise() (already inside call_once), and therefore
@@ -654,7 +657,10 @@ public:
 
     virtual void PrepareFrame();
 
-    virtual void PostProcessFrame(uint16_t, uint16_t);
+    virtual void PostProcessFrame(size_t, size_t);
+
+    // Matrix-style graphics backends may composite a transient effect title.
+    virtual void SetCaption(const String &, uint32_t) {}
 
     static const PolarMapArray& getPolarMap();
 };

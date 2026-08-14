@@ -68,6 +68,7 @@ const uint8_t GFXBase::gamma6[64] =
 
 GFXBase::~GFXBase()
 {
+    heap_caps_free(_blurColumnScratch);
 }
 
 uint8_t GFXBase::beatcos8(accum88 beats_per_minute, uint8_t lowest, uint8_t highest, uint32_t timebase, uint8_t phase_offset)
@@ -545,6 +546,45 @@ CRGBW GFXBase::MaximumWhiteForKelvin(uint16_t kelvin, uint8_t brightness)
 
 void GFXBase::blurRows(CRGB *leds, uint16_t width, uint16_t height, uint16_t first, fract8 blur_amount)
 {
+    // LCD and HUB75 framebuffers are row-major. Walk them directly so a
+    // native-resolution frame remains cache-friendly in PSRAM; calling XY()
+    // several million times per frame is prohibitively expensive.
+    const bool rowMajor = width < 2 || (xy(0, 0) == 0 && xy(1, 0) == 1 && xy(0, 1) == width);
+    if (rowMajor)
+    {
+        const uint8_t keep = 255 - blur_amount;
+        const uint8_t seep = blur_amount >> 1;
+        for (uint16_t row = 0; row < height; ++row)
+        {
+            CRGB carryover = CRGB::Black;
+            CRGB pending = CRGB::Black;
+            CRGB *line = leds + static_cast<size_t>(row) * width;
+            for (uint16_t i = first; i < width; ++i)
+            {
+                CRGB cur = line[i];
+                CRGB part = cur;
+                part.nscale8(seep);
+                cur.nscale8(keep);
+                cur += carryover;
+                if (i)
+                {
+                    if (i == first)
+                        line[i - 1] += part;
+                    else
+                        line[i - 1] = pending + part;
+                }
+                pending = cur;
+                carryover = part;
+            }
+            if (first < width)
+                line[width - 1] = pending;
+            if (static_cast<uint32_t>(width) * height > 65536U &&
+                (row & 63U) == 63U)
+                delay(10);
+        }
+        return;
+    }
+
     // blur rows same as columns, for irregular matrix
     uint8_t keep = 255 - blur_amount;
     uint8_t seep = blur_amount >> 1;
@@ -570,6 +610,58 @@ void GFXBase::blurRows(CRGB *leds, uint16_t width, uint16_t height, uint16_t fir
 
 void GFXBase::blurColumns(CRGB *leds, uint16_t width, uint16_t height, uint16_t first, fract8 blur_amount)
 {
+    const bool rowMajor = width < 2 || (xy(0, 0) == 0 && xy(1, 0) == 1 && xy(0, 1) == width);
+    if (rowMajor)
+    {
+        // Keeping one carry value per column lets us traverse both source and
+        // destination rows sequentially. The former column-at-a-time walk
+        // incurred a PSRAM cache miss for nearly every pixel at 1280x720.
+        if (_blurColumnScratchWidth < width)
+        {
+            CRGB *scratch = static_cast<CRGB *>(
+                heap_caps_calloc(width * 2U, sizeof(CRGB), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+            if (!scratch)
+                throw std::runtime_error("Unable to allocate native blur scratch rows");
+            heap_caps_free(_blurColumnScratch);
+            _blurColumnScratch = scratch;
+            _blurColumnScratchWidth = width;
+        }
+        CRGB *carry = _blurColumnScratch;
+        CRGB *pending = _blurColumnScratch + _blurColumnScratchWidth;
+        memset(carry, 0, width * sizeof(CRGB));
+
+        const uint8_t keep = 255 - blur_amount;
+        const uint8_t seep = blur_amount >> 1;
+        for (uint16_t row = first; row < height; ++row)
+        {
+            CRGB *line = leds + static_cast<size_t>(row) * width;
+            CRGB *previous = row ? line - width : nullptr;
+            for (uint16_t col = 0; col < width; ++col)
+            {
+                CRGB cur = line[col];
+                CRGB part = cur;
+                part.nscale8(seep);
+                cur.nscale8(keep);
+                cur += carry[col];
+                if (previous)
+                {
+                    if (row == first)
+                        previous[col] += part;
+                    else
+                        previous[col] = pending[col] + part;
+                }
+                pending[col] = cur;
+                carry[col] = part;
+            }
+            if (static_cast<uint32_t>(width) * height > 65536U &&
+                (row & 63U) == 63U)
+                delay(10);
+        }
+        if (first < height)
+            memcpy(leds + static_cast<size_t>(height - 1) * width, pending, width * sizeof(CRGB));
+        return;
+    }
+
     // blur columns
     uint8_t keep = 255 - blur_amount;
     uint8_t seep = blur_amount >> 1;
@@ -676,7 +768,7 @@ bool GFXBase::EnsureNoise() const
 // Dirty hack to support FastLED, which calls out of band to get the pixel index for "the" array, without
 // any indication of which array or who's asking, so we assume the first matrix. If you have trouble with
 // more than one matrix and some FastLED functions like blur2d, this would be why.
-uint16_t XY(uint16_t x, uint16_t y)
+size_t XY(uint16_t x, uint16_t y)
 {
     auto& g = g_ptrSystem->GetEffectManager().g();
     return g.xy(x, y);
@@ -700,7 +792,15 @@ const GFXBase::PolarMapArray& GFXBase::getPolarMap()
                 float angle_rad = atan2f(static_cast<float>(y), static_cast<float>(x));
                 float radius_float = hypotf(static_cast<float>(x), static_cast<float>(y));
 
-                rMap[x + C_X][y + C_Y].angle = 128.0f * (angle_rad / (float)M_PI);
+                // Encode the signed -128..128 polar angle explicitly into the
+                // cyclic 0..255 byte domain. Directly converting a negative
+                // float to uint8_t is out of range and produced target-specific
+                // results; on ESP32-P4 it flattened much of the upper half of
+                // radial effects to one angle.
+                const int16_t signedAngle = static_cast<int16_t>(
+                    128.0f * (angle_rad / static_cast<float>(M_PI)));
+                rMap[x + C_X][y + C_Y].angle =
+                    static_cast<uint8_t>(signedAngle & 0xFF);
                 rMap[x + C_X][y + C_Y].scaled_radius = radius_float * mapp;
                 rMap[x + C_X][y + C_Y].unscaled_radius = radius_float;
             }

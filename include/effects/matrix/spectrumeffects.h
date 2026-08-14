@@ -856,8 +856,12 @@ class SpectrumBarEffect : public EffectWithId<SpectrumBarEffect>, public BeatEff
             auto value =  g_Analyzer.BeatEnhance(SPECTRUMBARBEAT_ENHANCE) * g_Analyzer.Peak2Decay(iBand);
             auto top    = std::max(0.0f, halfHeight - value * halfHeight);
             auto bottom = std::min(MATRIX_HEIGHT-1.0f, halfHeight + value * halfHeight + 1);
-            auto x1     = halfWidth - ((iBand * 2 + offset) % halfWidth);
-            auto x2     = halfWidth + ((iBand * 2 + offset) % halfWidth);
+            const size_t radialOffset =
+                ((static_cast<size_t>(iBand) * halfWidth) / NUM_BANDS + offset) %
+                halfWidth;
+            const int x1 = static_cast<int>(halfWidth) -
+                           static_cast<int>(radialOffset);
+            const int x2 = static_cast<int>(halfWidth + radialOffset);
 
             if (value == 0.0f)
                 bottom = top;

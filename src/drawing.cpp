@@ -80,7 +80,7 @@ static void PrepareWiFiActivityPin()
     l_WiFiActivityActive = false;
 }
 
-static void UpdateWiFiActivityPin(uint16_t wifiPixelsDrawn, uint16_t localPixelsDrawn)
+static void UpdateWiFiActivityPin(size_t wifiPixelsDrawn, size_t localPixelsDrawn)
 {
     if (wifiPixelsDrawn > 0)
     {
@@ -96,7 +96,7 @@ static void PrepareWiFiActivityPin()
 {
 }
 
-static void UpdateWiFiActivityPin(uint16_t, uint16_t)
+static void UpdateWiFiActivityPin(size_t, size_t)
 {
 }
 
@@ -114,7 +114,7 @@ std::shared_ptr<LEDStripEffect> GetSpectrumAnalyzer(CRGB color);    // Defined i
 //
 // Draws from WiFi color data if available, returns pixels drawn this frame
 
-uint16_t WiFiDraw()
+size_t WiFiDraw()
 {
     // Builds with INCOMING_WIFI_ENABLED=0 never create the buffer managers,
     // but this path is still reachable whenever WiFi itself is connected.
@@ -123,7 +123,7 @@ uint16_t WiFiDraw()
 
     std::lock_guard guard(g_buffer_mutex);
 
-    uint16_t pixelsDrawn = 0;
+    size_t pixelsDrawn = 0;
     for (auto& bufferManager : g_ptrSystem->GetBufferManagers())
     {
 
@@ -156,7 +156,7 @@ uint16_t WiFiDraw()
             if (pBuffer)
             {
                 l_usLastWifiDraw = micros();
-                debugV("Calling LEDBuffer::Draw from wire with %d/%zu pixels.", pixelsDrawn, pBuffer->_pStrand->GetLEDCount());
+                debugV("Calling LEDBuffer::Draw from wire with %zu/%zu pixels.", pixelsDrawn, pBuffer->_pStrand->GetLEDCount());
                 pBuffer->DrawBuffer();
                 // In case we drew some pixels and then drew 0 due a failure, we want to return a positive
                 // number of pixels drawn so the caller knows we did in fact render.
@@ -164,7 +164,7 @@ uint16_t WiFiDraw()
             }
         }
     }
-    debugV("WifIDraw claims to have drawn %d pixels", pixelsDrawn);
+    debugV("WifIDraw claims to have drawn %zu pixels", pixelsDrawn);
     return pixelsDrawn;
 }
 
@@ -172,7 +172,7 @@ uint16_t WiFiDraw()
 //
 // Draws from effects table rather than from WiFi data.  Returns the number of LEDs rendered.
 
-uint16_t LocalDraw()
+size_t LocalDraw()
 {
     if (!g_ptrSystem->HasEffectManager())
     {
@@ -222,7 +222,7 @@ uint16_t LocalDraw()
 //
 // Returns the amount of time to wait patiently until it's time to draw the next frame, up to one second max
 
-int CalcDelayUntilNextFrame(double frameStartTime, uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
+int CalcDelayUntilNextFrame(double frameStartTime, size_t localPixelsDrawn, size_t wifiPixelsDrawn)
 {
     constexpr auto kMinDelay = 0.001;
 
@@ -284,6 +284,14 @@ int CalcDelayUntilNextFrame(double frameStartTime, uint16_t localPixelsDrawn, ui
     }
 
     return g_Values.FreeDrawTime * MILLIS_PER_SECOND;
+#else
+    // Fixed-rate targets (such as the Tab5 LCD backend) do not derive their
+    // cadence from the active effect or queued WiFi frames.
+    (void)frameStartTime;
+    (void)localPixelsDrawn;
+    (void)wifiPixelsDrawn;
+    g_Values.FreeDrawTime = static_cast<double>(MILLIS_PER_FRAME) / MILLIS_PER_SECOND;
+    return MILLIS_PER_FRAME;
 #endif
 }
 
@@ -382,8 +390,8 @@ void IRAM_ATTR RenderService::Run()
     {
         g_Values.AppTime.NewFrame();
 
-        uint16_t localPixelsDrawn   = 0;
-        uint16_t wifiPixelsDrawn    = 0;
+        size_t localPixelsDrawn   = 0;
+        size_t wifiPixelsDrawn    = 0;
         double frameStartTime       = g_Values.AppTime.FrameStartTime();
 
         {

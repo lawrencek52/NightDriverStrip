@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <gfxfont.h>
 #include <memory>
 #include <stdexcept>
@@ -50,19 +51,42 @@ void GFXBase::MoveInwardX(int startY, int endY)
     const int halfWidth = width / 2;
     if (leds == nullptr || halfWidth <= 1 || height <= 0)
         return;
+    constexpr int kReferenceMatrixWidth = 64;
+    const int scrollPixels = std::min(
+        halfWidth - 1,
+        std::max(1, (width + kReferenceMatrixWidth / 2) / kReferenceMatrixWidth));
 
     startY = std::max(0, startY);
     endY = std::min(height - 1, endY);
 
-    for (int y = startY; y <= endY; y++)
+    const bool rowMajor = width < 2 ||
+        (xy(0, 0) == 0 && xy(1, 0) == 1 && xy(0, 1) == static_cast<size_t>(width));
+    if (rowMajor)
     {
-        // Keep both halves inside the row. The previous loops read x+1 at
-        // width, which can corrupt unrelated pixels or memory at row edges.
-        for (int x = halfWidth - 1; x > 0; x--)
-            leds[XY(x, y)] = leds[XY(x - 1, y)];
+        for (int y = startY; y <= endY; ++y)
+        {
+            CRGB *line = leds + static_cast<size_t>(y) * width;
+            const CRGB leftEdge = line[0];
+            const CRGB rightEdge = line[width - 1];
+            memmove(line + scrollPixels, line,
+                    sizeof(CRGB) * (halfWidth - scrollPixels));
+            memmove(line + halfWidth, line + halfWidth + scrollPixels,
+                    sizeof(CRGB) * (halfWidth - scrollPixels));
+            std::fill_n(line, scrollPixels, leftEdge);
+            std::fill_n(line + width - scrollPixels, scrollPixels, rightEdge);
+        }
+        return;
+    }
 
-        for (int x = halfWidth; x < width - 1; x++)
-            leds[XY(x, y)] = leds[XY(x + 1, y)];
+    for (int step = 0; step < scrollPixels; ++step)
+    {
+        for (int y = startY; y <= endY; y++)
+        {
+            for (int x = halfWidth - 1; x > 0; x--)
+                leds[XY(x, y)] = leds[XY(x - 1, y)];
+            for (int x = halfWidth; x < width - 1; x++)
+                leds[XY(x, y)] = leds[XY(x + 1, y)];
+        }
     }
 }
 
@@ -73,17 +97,42 @@ void GFXBase::MoveOutwardsX(int startY, int endY)
     const int halfWidth = width / 2;
     if (leds == nullptr || halfWidth <= 1 || height <= 0)
         return;
+    constexpr int kReferenceMatrixWidth = 64;
+    const int scrollPixels = std::min(
+        halfWidth - 1,
+        std::max(1, (width + kReferenceMatrixWidth / 2) / kReferenceMatrixWidth));
 
     startY = std::max(0, startY);
     endY = std::min(height - 1, endY);
 
-    for (int y = startY; y <= endY; y++)
+    const bool rowMajor = width < 2 ||
+        (xy(0, 0) == 0 && xy(1, 0) == 1 && xy(0, 1) == static_cast<size_t>(width));
+    if (rowMajor)
     {
-        for (int x = 0; x < halfWidth - 1; x++)
-            leds[XY(x, y)] = leds[XY(x + 1, y)];
+        for (int y = startY; y <= endY; ++y)
+        {
+            CRGB *line = leds + static_cast<size_t>(y) * width;
+            const CRGB leftCenter = line[halfWidth - 1];
+            const CRGB rightCenter = line[halfWidth];
+            memmove(line, line + scrollPixels,
+                    sizeof(CRGB) * (halfWidth - scrollPixels));
+            memmove(line + halfWidth + scrollPixels, line + halfWidth,
+                    sizeof(CRGB) * (halfWidth - scrollPixels));
+            std::fill_n(line + halfWidth - scrollPixels, scrollPixels, leftCenter);
+            std::fill_n(line + halfWidth, scrollPixels, rightCenter);
+        }
+        return;
+    }
 
-        for (int x = width - 1; x > halfWidth; x--)
-            leds[XY(x, y)] = leds[XY(x - 1, y)];
+    for (int step = 0; step < scrollPixels; ++step)
+    {
+        for (int y = startY; y <= endY; y++)
+        {
+            for (int x = 0; x < halfWidth - 1; x++)
+                leds[XY(x, y)] = leds[XY(x + 1, y)];
+            for (int x = width - 1; x > halfWidth; x--)
+                leds[XY(x, y)] = leds[XY(x - 1, y)];
+        }
     }
 }
 
