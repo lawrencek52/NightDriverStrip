@@ -676,7 +676,9 @@ namespace nd_network
         #endif
 
         #if INCOMING_WIFI_ENABLED
-        DebugCLI::cli_printf("Socket Buffer _cbReceived: %zu", g_ptrSystem->GetSocketServer()._cbReceived);
+        auto& socketServer = g_ptrSystem->GetSocketServer();
+        DebugCLI::cli_printf("Socket clients: %zu/%zu, partial packet bytes: %zu",
+            socketServer.CountActiveClients(), SocketServer::MaxClients(), socketServer.PendingPacketBytes());
         #endif
     }
 
@@ -913,11 +915,11 @@ bool ProcessIncomingData(allocated_unique_ptr<uint8_t[]> &payloadData, size_t pa
                     return false;
                 }
 
-                // The very old original implementation used channel numbers, not a mask, and only channel 0 was supported at that time, so if
-                // we see a Channel 0 asked for, it must be very old, and we massage it into the mask for Channel0 instead
-                // Another option here would be to draw on all channels (0xff) instead of just one (0x01) if 0 is specified
-                if (channel16 == 0)
-                    channel16 = 1;
+                // A Channel 0 request comes from a sender that predates the mask
+                // and only knew about one channel, so it means channel 0 alone.
+                // Another option here would be to draw on all channels (0xff)
+                // instead of just one (0x01) if 0 is specified.
+                channel16 = NormalizeChannelMask(channel16);
 
                 // Go through the channel mask to see which bits are set in the channel16 specifier, and send the data to each and every
                 // channel that matches the mask.  So if the send channel 7, that means the lowest 3 channels will be set.

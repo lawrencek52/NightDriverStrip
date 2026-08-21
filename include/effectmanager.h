@@ -404,8 +404,15 @@ public:
     // EffectManager::Update
     //
     // Draws the current effect.  If gUIDirty has been set by an interrupt handler, it is reset here
+    //
+    // channelMask restricts the draw to the given channels, which the render
+    // loop uses to leave a strip alone while remote frames are feeding it.
+    // Only per-channel playback can honor it precisely: a single shared effect
+    // instance paints every strip it owns, all or nothing.
 
-    void Update();
+    static constexpr uint32_t kAllChannelsMask = ~0u;
+
+    void Update(uint32_t channelMask = kAllChannelsMask);
 
     void ApplyFadeLogic();
 };

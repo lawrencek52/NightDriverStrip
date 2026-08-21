@@ -884,7 +884,7 @@ void EffectManager::PreviousEffect()
 //
 // Draws the current effect.  If gUIDirty has been set by an interrupt handler, it is reset here
 
-void EffectManager::Update()
+void EffectManager::Update(uint32_t channelMask)
 {
     std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
 
@@ -901,14 +901,20 @@ void EffectManager::Update()
     DispatchBeatIfNeeded();
 
     // A temp effect (remote global color) deliberately owns every strip, so it
-    // short-circuits per-channel playback.
+    // short-circuits per-channel playback - and with it channelMask, which only
+    // the per-channel clones can apply strip by strip. A shared effect is the
+    // same story: one instance, every strip it owns, so the mask can only be
+    // "draw" or "don't".
 
     if (_tempEffect)
         _tempEffect->Draw();
     else if (_channelsIndependent)
-        for (auto& channel : _channels)
-            DrawChannel(channel);
-    else
+    {
+        for (size_t i = 0; i < _channels.size(); i++)
+            if (channelMask & (1u << i))
+                DrawChannel(_channels[i]);
+    }
+    else if (channelMask != 0)
         _vEffects[_iCurrentEffect]->Draw();
 
     ApplyFadeLogic();

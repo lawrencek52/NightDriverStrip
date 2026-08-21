@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <ArduinoOTA.h>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -48,20 +49,58 @@
 #include "effects/matrix/spectrumeffects.h"
 
 static DRAM_ATTR CRGB l_SinglePixel = CRGB::Blue;
-static DRAM_ATTR uint64_t l_usLastWifiDraw = 0;
+
+// When each channel last drew a remote frame. Per channel rather than per
+// device, because a multi-channel device can be fed by several senders at once
+// (the companion NDSCPP server opens a connection per strip): one strip going
+// quiet should return that strip to its local effect without disturbing the
+// others, and one strip receiving frames should no longer freeze the rest.
+
+static DRAM_ATTR std::array<uint64_t, NUM_CHANNELS> l_usLastWifiDraw = {};
 static DRAM_ATTR bool l_WiFiActivityActive = false;
 static uint32_t l_FrameCountThisSecond = 0;
 static uint32_t l_LastSecondBoundaryMs = 0;
 
-static uint32_t MicrosSinceLastWifiDraw()
+static uint32_t MicrosSinceLastWifiDraw(size_t channel)
 {
-    return micros() - static_cast<uint32_t>(l_usLastWifiDraw);
+    return micros() - static_cast<uint32_t>(l_usLastWifiDraw[channel]);
+}
+
+// A channel counts as remotely fed until its stream has been quiet for
+// TIME_BEFORE_LOCAL; a channel that has never seen a frame never counts.
+
+static bool IsChannelWifiFed(size_t channel)
+{
+    return l_usLastWifiDraw[channel] != 0 &&
+           MicrosSinceLastWifiDraw(channel) <= (TIME_BEFORE_LOCAL * MICROS_PER_SECOND);
+}
+
+// ChannelsNeedingLocalDraw
+//
+// One bit per channel that has no remote frames arriving and should therefore
+// be showing its own effect. Zero means every strip is being fed remotely, in
+// which case the local effects are skipped entirely - which is what keeps a
+// fully remote-driven device from paying for renders nobody sees.
+
+static uint32_t ChannelsNeedingLocalDraw()
+{
+    uint32_t channelMask = 0;
+
+    for (size_t channel = 0; channel < l_usLastWifiDraw.size(); channel++)
+        if (!IsChannelWifiFed(channel))
+            channelMask |= 1u << channel;
+
+    return channelMask;
 }
 
 #if WIFI_ACTIVITY_PIN >= 0
 static bool IsWiFiDrawWindowActive()
 {
-    return l_usLastWifiDraw != 0 && MicrosSinceLastWifiDraw() <= (TIME_BEFORE_LOCAL * MICROS_PER_SECOND);
+    for (size_t channel = 0; channel < l_usLastWifiDraw.size(); channel++)
+        if (IsChannelWifiFed(channel))
+            return true;
+
+    return false;
 }
 
 static void SetWiFiActivityPin(bool active)
@@ -124,8 +163,11 @@ uint16_t WiFiDraw()
     std::lock_guard guard(g_buffer_mutex);
 
     uint16_t pixelsDrawn = 0;
+    size_t channel = 0;
+
     for (auto& bufferManager : g_ptrSystem->GetBufferManagers())
     {
+        const size_t thisChannel = channel++;
 
         timeval tv;
         gettimeofday(&tv, nullptr);
@@ -155,7 +197,11 @@ uint16_t WiFiDraw()
 
             if (pBuffer)
             {
-                l_usLastWifiDraw = micros();
+                // Stamped per channel: this strip is remotely fed, whatever the
+                // others are doing.
+                if (thisChannel < l_usLastWifiDraw.size())
+                    l_usLastWifiDraw[thisChannel] = micros();
+
                 debugV("Calling LEDBuffer::Draw from wire with %d/%zu pixels.", pixelsDrawn, pBuffer->_pStrand->GetLEDCount());
                 pBuffer->DrawBuffer();
                 // In case we drew some pixels and then drew 0 due a failure, we want to return a positive
@@ -171,9 +217,24 @@ uint16_t WiFiDraw()
 // LocalDraw
 //
 // Draws from effects table rather than from WiFi data.  Returns the number of LEDs rendered.
+//
+// channelMask says which strips still want their local effect; the strips being
+// fed remote frames are left out of it. Per-channel playback honors the mask
+// exactly, while one shared effect instance paints every strip it owns - the
+// draw loop handles that case by drawing remote frames afterwards, on top.
 
-uint16_t LocalDraw()
+uint16_t LocalDraw(uint32_t channelMask)
 {
+    // Every strip is being fed remotely, so there is nothing local to draw.
+    // Returning 0 also tells the caller no pixels were rendered, which is what
+    // keeps it from needlessly pushing the strip - that costs real time.
+
+    if (channelMask == 0)
+    {
+        debugV("Not drawing local effects because every channel is being fed remotely");
+        return 0;
+    }
+
     if (!g_ptrSystem->HasEffectManager())
     {
         debugW("Drawing before EffectManager is ready, so delaying...");
@@ -186,31 +247,19 @@ uint16_t LocalDraw()
 
         if (effectManager.HasCurrentEffect())
         {
-            // If we've never drawn from wifi before, now would also be a good time to local draw
-            if (l_usLastWifiDraw == 0 || (MicrosSinceLastWifiDraw() > (TIME_BEFORE_LOCAL * MICROS_PER_SECOND)))
-            {
-                effectManager.Update(); // Draw the current built in effect
+            effectManager.Update(channelMask);      // Draw the current built in effect
 
-                #if SHOW_VU_METER
-                    #if ENABLE_AUDIO
-                        static auto spectrum = std::static_pointer_cast<SpectrumAnalyzerEffect>(GetSpectrumAnalyzer(0));
-                        if (effectManager.IsVUVisible())
-                            spectrum->DrawVUMeter(g_ptrSystem->GetEffectManager().GetBaseGraphics(), 0, g_Analyzer.IsRemoteAudioActive() ? & vuPaletteBlue : &vuPaletteGreen);
-                    #endif
+            #if SHOW_VU_METER
+                #if ENABLE_AUDIO
+                    static auto spectrum = std::static_pointer_cast<SpectrumAnalyzerEffect>(GetSpectrumAnalyzer(0));
+                    if (effectManager.IsVUVisible())
+                        spectrum->DrawVUMeter(g_ptrSystem->GetEffectManager().GetBaseGraphics(), 0, g_Analyzer.IsRemoteAudioActive() ? & vuPaletteBlue : &vuPaletteGreen);
                 #endif
+            #endif
 
-                const auto activeLEDCount = g_ptrSystem->GetEffectManager().g().GetLEDCount();
-                debugV("LocalDraw claims to have drawn %zu pixels", activeLEDCount);
-                return activeLEDCount;
-            }
-            else
-            {
-                debugV("Not drawing local effect because last wifi draw was %lf seconds ago.", MicrosSinceLastWifiDraw() / (float)MICROS_PER_SECOND);
-                // It's important to return 0 when you do not draw so that the caller knows we did not
-                // render any pixels, and we can/should wait until the next frame.  Otherwise, the caller might
-                // draw the strip needlessly, which can take significant time.
-                return 0;
-            }
+            const auto activeLEDCount = g_ptrSystem->GetEffectManager().g().GetLEDCount();
+            debugV("LocalDraw claims to have drawn %zu pixels", activeLEDCount);
+            return activeLEDCount;
         }
     }
 
@@ -405,13 +454,17 @@ void IRAM_ATTR RenderService::Run()
 
             graphics.PrepareFrame();
 
+            // Strips whose sender has gone quiet (or never had one) fall back to
+            // their own effect, while the strips still being fed keep showing
+            // what arrives. Local goes first and remote paints over the top of
+            // it, which is what makes the mixed case work at all: in shared mode
+            // the single effect instance necessarily covers every strip it owns,
+            // so ordering - not the mask - is what protects the remote-fed ones.
+
+            localPixelsDrawn = LocalDraw(ChannelsNeedingLocalDraw());
+
             if (nd_network::IsWiFiConnected())
                 wifiPixelsDrawn = WiFiDraw();
-
-            // If we didn't draw now, and it's been a while since we did, and we have at least one local effect, then draw the local effect instead
-
-            if (wifiPixelsDrawn == 0 && localPixelsDrawn == 0)
-                localPixelsDrawn = LocalDraw();
 
             // If we drew any pixels by any method, we'll call that a frame and track it for FPS purposes.  We also notify the
             // color data thread that a new frame is available and can be transmitted to clients

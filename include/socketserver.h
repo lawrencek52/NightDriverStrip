@@ -32,6 +32,7 @@
 
 #include "globals.h"
 
+#include <array>
 #include <atomic>
 #include <limits>
 #include <memory>
@@ -63,6 +64,27 @@ inline bool CheckedStandardPacketSize(uint32_t itemCount, size_t itemSize, size_
 
     packetSize = STANDARD_DATA_HEADER_SIZE + itemCount * itemSize;
     return true;
+}
+
+// NormalizeChannelMask / FirstChannelInMask
+//
+// The channel field of a pixel packet is a bitmask - bit 0 is channel 0 - so a
+// sender can paint several strips with one frame. The original implementation
+// predated multi-channel devices and sent a plain 0, which is why a 0 is read
+// as "channel 0 only" rather than "no channels".
+//
+// Shared by the receive path, which fans a packet out to every channel in the
+// mask, and by the status reply, which has room for one channel's statistics
+// and reports the first one the packet targeted.
+
+inline uint16_t NormalizeChannelMask(uint16_t channel16)
+{
+    return channel16 == 0 ? 1 : channel16;
+}
+
+inline size_t FirstChannelInMask(uint16_t channel16)
+{
+    return __builtin_ctz(NormalizeChannelMask(channel16));      // Never zero once normalized
 }
 
 bool ProcessIncomingData(allocated_unique_ptr<uint8_t []> & payloadData, size_t payloadLength);
@@ -103,10 +125,47 @@ static_assert( sizeof(SocketResponse) == 72, "SocketResponse struct size is not 
 // Handles incoming connections from the server and passes the data that comes
 // in. Inherits ITaskService so the accept/read loop, shutdown signaling, and
 // listening-socket teardown all share the standard service lifecycle.
+//
+// Several senders are served at once, which is what a multi-channel device
+// needs: the companion NDSCPP server opens one socket per LED feature, so a
+// four-strip device sees four simultaneous connections, each streaming frames
+// for its own channel. All of them are multiplexed through a single select()
+// in one task rather than a task (or a turn) per connection.
 
 class SocketServer : public ITaskService
 {
 private:
+
+    // One sender per output channel is the expected case, plus headroom for a
+    // client that is reconnecting before its previous socket has been reaped.
+    // Capped well below CONFIG_LWIP_MAX_SOCKETS (16 on the S3) so the web
+    // server, OTA and the color data server keep their own descriptors.
+
+    static constexpr size_t MAX_CLIENTS = (NUM_CHANNELS + 2) > 8 ? 8 : (NUM_CHANNELS + 2);
+
+    // A client that has gone quiet for this long is dropped, so a wedged sender
+    // - or one that vanished without a FIN - can't hold a slot indefinitely.
+    // Generous next to the 30fps a live sender runs at.
+
+    static constexpr uint32_t CLIENT_IDLE_TIMEOUT_MS = 10000;
+
+    // ClientConnection
+    //
+    // Everything the framing state machine needs for one connected sender.
+    // The packet buffer has to be per connection because packets from
+    // different senders interleave: each one accumulates in its own buffer
+    // until it holds a whole packet. The buffer is only allocated while the
+    // slot is in use.
+
+    struct ClientConnection
+    {
+        int                              fd             = -1;
+        allocated_unique_ptr<uint8_t []> buffer;
+        size_t                           cbReceived     = 0;   // Bytes of the in-flight packet held so far
+        uint32_t                         lastActivityMs = 0;   // millis() at the last successful read
+
+        bool InUse() const { return fd >= 0; }
+    };
 
     int                         _port;
     int                         _numLeds;
@@ -116,15 +175,13 @@ private:
     // service-stop path (OnBeforeWaitForStop, called on the caller's thread).
     // Using atomic exchange ensures only one of those callers actually
     // close()s the descriptor; the other observes -1 and is a no-op.
-    
+
     std::atomic<int>            _server_fd{-1};
     struct sockaddr_in          _address;
-    allocated_unique_ptr<uint8_t []> _pBuffer;
-    allocated_unique_ptr<uint8_t []> _abOutputBuffer;
+    std::array<ClientConnection, MAX_CLIENTS> _clients;
+    allocated_unique_ptr<uint8_t []> _abOutputBuffer;          // Shared decompression scratch
 
 public:
-
-    size_t                      _cbReceived;
 
     SocketServer(int port, int numLeds);
     ~SocketServer() override { Stop(); }
@@ -134,9 +191,15 @@ public:
 
     void release();
     bool begin();
-    void ResetReadBuffer();
     void SetLEDCount(size_t numLeds) { _numLeds = numLeds; }
     size_t GetLEDCount() const { return _numLeds; }
+
+    // Status, for the debug CLI: how many senders are connected, and how many
+    // bytes of half-arrived packets they are collectively holding.
+
+    size_t CountActiveClients() const;
+    size_t PendingPacketBytes() const;
+    static constexpr size_t MaxClients() { return MAX_CLIENTS; }
 
   protected:
     // ITaskService hooks
@@ -144,20 +207,42 @@ public:
     void Run() override;
     void OnBeforeWaitForStop() override;
 
-  public:
-
-    // ReadUntilNBytesReceived
-    //
-    // Read from the socket until the buffer contains at least cbNeeded bytes
-
-    bool ReadUntilNBytesReceived(size_t socket, size_t cbNeeded);
+  private:
 
     // ProcessIncomingConnectionsLoop
     //
-    // Socket server main ProcessIncomingConnectionsLoop - accepts new connections and reads from them, dispatching
-    // data packets into our buffer and closing the socket if anything goes weird.
+    // Socket server main loop: one select() over the listening socket and every
+    // connected client, accepting new senders and draining the ones with data
+    // waiting. Returns when the listening socket goes bad, WiFi drops, or the
+    // service is stopping - the caller then rebuilds the listener.
 
     bool ProcessIncomingConnectionsLoop();
+
+    void AcceptNewConnection(int listen_fd);
+
+    // Drains what is available from one client, framing and dispatching whole
+    // packets as they complete. Returns false if the connection should be closed.
+    bool ServiceClient(ClientConnection& client);
+
+    bool ProcessCompletePacket(ClientConnection& client, size_t packetSize);
+    void SendResponsePacket(int fd, size_t channel);
+
+    void ReapIdleClients();
+    void CloseClient(ClientConnection& client, const char* reason);
+    void CloseAllClients();
+
+    // PacketBytesNeeded
+    //
+    // Framing. Reports how many bytes the packet at the head of the buffer needs
+    // in total, given the 'have' bytes of it that have arrived: four for the
+    // magic word, then the size of whichever header the magic indicates, then
+    // the whole packet. Reading no further than this is what keeps the reader
+    // from swallowing the head of the next packet in a back-to-back stream.
+    // Returns false on a malformed header, which costs the connection.
+
+    static bool PacketBytesNeeded(const uint8_t* buffer, size_t have, size_t& needed);
+
+  public:
 
     // DecompressBuffer
     //
