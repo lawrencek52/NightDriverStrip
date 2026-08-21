@@ -512,6 +512,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       toggle.id = `nd-effect-${index}-enabled`;
       toggle.name = toggle.id;
       toggle.checked = !!effect.enabled;
+      toggle.dataset.action = "enabled";
       toggle.addEventListener("change", () => {
         postForm(effect.enabled ? "/disableEffect" : "/enableEffect", { effectIndex: index }).then(loadEffectsOnly).catch((error) => {
           toggle.checked = !!effect.enabled;
@@ -543,14 +544,14 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       const actionsCell = document.createElement("td");
       actionsCell.className = "row-actions";
       const allStripsTitle = channelEffects.length > 1 ? "Play on all strips (resumes rotation)" : "Trigger effect";
-      actionsCell.appendChild(miniIconButton("▶", allStripsTitle, () => postForm("/currentEffect", { currentEffectIndex: index }).then(loadEffectsOnly), !effect.enabled));
+      actionsCell.appendChild(tagAction(miniIconButton("▶", allStripsTitle, () => postForm("/currentEffect", { currentEffectIndex: index }).then(loadEffectsOnly), !effect.enabled), "play"));
 
       // One numbered button per output channel, so an effect can be pinned to a
       // single strip. Pinning stops the rotation timer; "▶" above puts it back.
       if (channelEffects.length > 1) {
         channelEffects.forEach((playing, channel) => {
-          const button = miniIconButton(String(channel + 1), `Play on strip ${channel + 1} only`, () =>
-            postForm("/currentEffect", { currentEffectIndex: index, channel }).then(loadEffectsOnly), !effect.enabled);
+          const button = tagAction(miniIconButton(String(channel + 1), `Play on strip ${channel + 1} only`, () =>
+            postForm("/currentEffect", { currentEffectIndex: index, channel }).then(loadEffectsOnly), !effect.enabled), `strip-${channel}`);
           if (playing === index) {
             button.classList.add("channel-button-active");
           }
@@ -558,15 +559,53 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
         });
       }
 
-      actionsCell.appendChild(miniIconButton("⚙", "Effect settings", () => openEffectDialog(index)));
-      actionsCell.appendChild(miniIconButton("🗑", "Delete effect", () => deleteEffect(index), !!effect.core));
+      actionsCell.appendChild(tagAction(miniIconButton("⚙", "Effect settings", () => openEffectDialog(index)), "settings"));
+      actionsCell.appendChild(tagAction(miniIconButton("🗑", "Delete effect", () => deleteEffect(index), !!effect.core), "delete"));
       tr.appendChild(actionsCell);
 
       return tr;
     });
 
+    const focus = captureEffectsFocus();
     els.effectsTableBody.replaceChildren(...rows);
+    restoreEffectsFocus(focus);
     renderChannels();
+  }
+
+  // tagAction / captureEffectsFocus / restoreEffectsFocus
+  //
+  // Rebuilding the table detaches every control, and detaching the focused one
+  // drops focus to the document body - so the three-second poll would kick a
+  // keyboard user back to the top of the page mid-tab. Each control carries the
+  // action it performs, which together with its row index survives the rebuild
+  // and identifies the replacement that should get focus back. (The strip FPS
+  // boxes take the opposite tack and skip the rebuild instead: restoring focus
+  // to a text field wouldn't bring back the caret or a half-typed value.)
+
+  function tagAction(element, action) {
+    element.dataset.action = action;
+    return element;
+  }
+
+  function captureEffectsFocus() {
+    const active = document.activeElement;
+    if (!active || !active.dataset || !active.dataset.action || !els.effectsTableBody.contains(active)) {
+      return null;
+    }
+    const row = active.closest("tr");
+    return row ? { effectIndex: row.dataset.effectIndex, action: active.dataset.action } : null;
+  }
+
+  function restoreEffectsFocus(focus) {
+    if (!focus) {
+      return;
+    }
+    const target = els.effectsTableBody.querySelector(`tr[data-effect-index="${focus.effectIndex}"] [data-action="${focus.action}"]`);
+    // preventScroll: a refresh the user didn't ask for shouldn't move the
+    // viewport, even if the row it lands on has shifted position.
+    if (target) {
+      target.focus({ preventScroll: true });
+    }
   }
 
   // renderChannels
@@ -577,6 +616,14 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
   function renderChannels() {
     if (!els.channelStrip) {
+      return;
+    }
+
+    // The effects list re-polls every few seconds, and rebuilding the cards
+    // detaches whatever the user is typing into - which blurs the FPS box a
+    // second or two after they click it. Leave the strip untouched while it
+    // holds focus; the next refresh after they tab out brings it up to date.
+    if (els.channelStrip.contains(document.activeElement)) {
       return;
     }
 
