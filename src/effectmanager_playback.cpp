@@ -39,12 +39,35 @@ void EffectManager::SetCurrentEffectIndex(size_t i)
     SetEffectIndex(kAllChannels, i);
 }
 
+// ResetChannelRateForNewEffect
+//
+// A frame rate override is a statement about one effect - "run Fire on strip 2 at
+// 5fps" - so it doesn't carry over to whatever replaces that effect. Selecting a
+// different effect for a strip hands the rate back to the new effect's
+// DesiredFramesPerSecond(); re-selecting the effect a strip is already showing
+// leaves the override alone, since nothing new was picked.
+
+bool EffectManager::ResetChannelRateForNewEffect(ChannelPlayback& channel, size_t effectIndex)
+{
+    // In shared mode the strip is showing _iCurrentEffect, not channel.index:
+    // rotation advances the shared index without touching the per-channel ones,
+    // so channel.index is stale until the channel is actually pinned.
+    const size_t playing = _channelsIndependent ? channel.index : _iCurrentEffect;
+
+    if (playing == effectIndex || channel.fpsOverride == 0)
+        return false;
+
+    channel.fpsOverride = 0;
+    return true;
+}
+
 // SetEffectIndex
 //
 // Points one channel, or every channel, at an effect. Selecting for all channels
 // collapses back to a single shared effect instance with rotation and cross-fade
 // running, which is the behavior the device has always had. Selecting for one
 // channel switches to independent mode, where each strip draws its own clone.
+// Either way, a strip that changes effect gives up its frame rate override.
 
 bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
 {
@@ -58,6 +81,12 @@ bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
 
     if (channel == kAllChannels)
     {
+        // Before ResumeSharedPlayback(), which drops independent mode and with it
+        // the per-channel indices this compares against.
+        bool clearedRates = false;
+        for (auto& ch : _channels)
+            clearedRates |= ResetChannelRateForNewEffect(ch, effectIndex);
+
         ResumeSharedPlayback();
 
         for (auto& ch : _channels)
@@ -68,6 +97,11 @@ bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
 
         StartEffect();
         SaveCurrentEffectIndex();
+
+        // SaveCurrentEffectIndex() only writes the index; the cleared rates live in
+        // the effect manager config, which is worth rewriting only if one changed.
+        if (clearedRates)
+            SaveEffectManagerConfig();
 
         {
             std::lock_guard listenerGuard(_listenerMutex);
@@ -85,7 +119,9 @@ bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
 
     const auto channelIndex = static_cast<size_t>(channel);
     const size_t previousIndex = _channels[channelIndex].index;
+    const uint previousRate = _channels[channelIndex].fpsOverride;
 
+    ResetChannelRateForNewEffect(_channels[channelIndex], effectIndex);
     _channels[channelIndex].index = effectIndex;
 
     if (!_channelsIndependent)
@@ -99,6 +135,7 @@ bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
         if (!EnterIndependentMode())
         {
             _channels[channelIndex].index = previousIndex;
+            _channels[channelIndex].fpsOverride = previousRate;
             debugW("Could not build per-channel effects, so staying in shared mode");
             return false;
         }
@@ -110,6 +147,7 @@ bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
         if (!effect)
         {
             _channels[channelIndex].index = previousIndex;
+            _channels[channelIndex].fpsOverride = previousRate;
             return false;
         }
 

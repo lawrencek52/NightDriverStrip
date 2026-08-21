@@ -97,6 +97,8 @@ The [`/effects` endpoint](#get-effect-list-information) reports the current stat
 
 The pre-existing `currentEffect` property continues to report the device-wide current effect index, so clients that predate per-channel support are unaffected.
 
+A frame rate override belongs to the effect it was set for, so selecting a *different* effect for a channel clears that channel's override and the new effect runs at the rate it asks for. Re-selecting the effect a channel is already showing leaves its override in place.
+
 Per-channel selections and frame rate overrides are persisted with the rest of the effect configuration and restored on reboot.
 
 ### Set channel frame rate
@@ -107,7 +109,7 @@ This endpoint overrides how often an output channel is drawn, independent of the
 | - | - | - |
 | URL | `/channelFrameRate` | |
 | Method | POST | |
-| Parameters | `fps` | Frames per second, 0 to 1000. 0 returns the channel to the frame rate its effect asks for. |
+| Parameters | `fps` | Frames per second, 0 to 1000. 0 returns the channel to the frame rate its effect asks for. An override lasts until the channel is pointed at a different effect. |
 | | `channel` | Optional. The (zero-based) integer index of the output channel. When omitted, the frame rate is applied to every channel. |
 | Response | 200 (OK) | An empty OK response. |
 | | 400 (Bad Request) | The channel index or frame rate is out of range. |

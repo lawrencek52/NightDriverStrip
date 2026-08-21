@@ -197,7 +197,11 @@ Initial tbody should show one full-width loading row.
 is playing, and a `label.channel-fps` wrapping a numeric input that posts to
 `/channelFrameRate`. It is rendered from the `channelEffects`, `channelFrameRates`
 and `channelFrameRateOverrides` arrays returned by `/effects`, and stays hidden on
-single-channel devices.
+single-channel devices. The input is left blank where the channel has no override,
+showing the rate actually in force as its placeholder; selecting a different effect
+for the channel clears the override, so the box empties and the placeholder becomes
+the new effect's own rate. The strip is not re-rendered while it holds focus, so a
+background refresh cannot blank a value being typed.
 
 In the Actions column, the `▶` button activates an effect on every channel; on
 multi-channel devices it is followed by one numbered button per channel that

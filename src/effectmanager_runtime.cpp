@@ -752,6 +752,11 @@ bool EffectManager::DeleteEffect(size_t index)
 
         if (_channelsIndependent && wasPlayingDeleted)
         {
+            // The deletion has landed this channel on a different effect, which is
+            // no more entitled to the old effect's frame rate than one the user
+            // picked by hand would be. See ResetChannelRateForNewEffect().
+            channel.fpsOverride = 0;
+
             auto effect = MakeChannelEffect(i, channel.index);
             if (effect)
                 channel.effect = std::move(effect);

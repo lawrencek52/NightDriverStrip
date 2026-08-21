@@ -186,6 +186,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     els.closeEffectDialogButton.addEventListener("click", closeEffectDialog);
     els.cancelEffectDialogButton.addEventListener("click", closeEffectDialog);
     els.applyEffectDialogButton.addEventListener("click", applyEffectSettings);
+    // Bound on the tbody, not the rows: the poll replaces every row, but the
+    // tbody itself sticks around, so one delegated listener outlives them all.
+    els.effectsTableBody.addEventListener("keydown", handleEffectsArrowKey);
     window.addEventListener("resize", () => {
       updateActiveTabCutout();
       drawPreviewFrame();
@@ -594,6 +597,58 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     }
     const row = active.closest("tr");
     return row ? { effectIndex: row.dataset.effectIndex, action: active.dataset.action } : null;
+  }
+
+  // handleEffectsArrowKey
+  //
+  // Grid movement across the effects table, on top of the tab order rather than
+  // in place of it: left/right step between the controls in a row, up/down hold
+  // the column and change rows. Tab still walks every control one at a time, so
+  // nothing that worked before stops working - the arrows just save thirty
+  // keystrokes getting from the first row's toggle to the last row's trash can.
+  //
+  // The data-action tags double as column identity here; enabledRowControls()
+  // drops disabled buttons, which can't take focus anyway (a core effect's
+  // delete, or every play button on a disabled effect).
+
+  function enabledRowControls(row) {
+    return Array.from(row.querySelectorAll("[data-action]")).filter((control) => !control.disabled);
+  }
+
+  function handleEffectsArrowKey(event) {
+    const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
+    const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
+    // Modified arrows belong to the browser (back/forward, caret browsing).
+    if ((!horizontal && !vertical) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+
+    const current = event.target.closest ? event.target.closest("[data-action]") : null;
+    const row = current && current.closest("tr");
+    if (!row) {
+      return;
+    }
+
+    const controls = enabledRowControls(row);
+    const column = controls.indexOf(current);
+    let target = null;
+
+    if (horizontal) {
+      target = controls[column + (event.key === "ArrowRight" ? 1 : -1)];
+    } else {
+      const rows = Array.from(els.effectsTableBody.querySelectorAll("tr"));
+      const nextRow = rows[rows.indexOf(row) + (event.key === "ArrowDown" ? 1 : -1)];
+      const nextControls = nextRow ? enabledRowControls(nextRow) : [];
+      // Prefer the same control; where that row doesn't offer it, land on the
+      // nearest one so the cursor never falls off the end of a shorter row.
+      target = nextControls.find((control) => control.dataset.action === current.dataset.action)
+        || nextControls[Math.min(column, nextControls.length - 1)];
+    }
+
+    if (target) {
+      event.preventDefault();     // otherwise the arrows scroll the page instead
+      target.focus();
+    }
   }
 
   function restoreEffectsFocus(focus) {

@@ -191,6 +191,13 @@ class  EffectManager : public IJSONSerializable
     // Rate a channel should draw at: its override if set, else its effect's ask.
     static uint EffectiveFrameRate(const ChannelPlayback& channel);
 
+    // Drops a channel's frame rate override when it is about to be pointed at a
+    // different effect, so the new effect runs at its own DesiredFramesPerSecond()
+    // instead of inheriting a rate that was chosen for its predecessor. Returns
+    // true if an override was actually cleared. Must be called before the
+    // channel's index is updated, since it compares against what is playing now.
+    bool ResetChannelRateForNewEffect(ChannelPlayback& channel, size_t effectIndex);
+
     // Zeroes one channel's whites plane; see StartEffect() for why that's needed
     // at every effect switch.
     static void ClearChannelWhites(const ChannelPlayback& channel);
