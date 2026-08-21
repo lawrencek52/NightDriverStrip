@@ -196,6 +196,7 @@ class CWebServer : public IService
 
     bool ApplyAudioInputPinChange(int oldPin);
     long GetEffectIndexFromParam(AsyncWebServerRequest * pRequest, bool post = false);
+    bool GetChannelFromParam(AsyncWebServerRequest * pRequest, int& channel, bool post = false);
     bool CheckAndGetSettingsEffect(AsyncWebServerRequest * pRequest, std::shared_ptr<LEDStripEffect> & effect, bool post = false);
     void SendEffectSettingsResponse(AsyncWebServerRequest * pRequest, std::shared_ptr<LEDStripEffect> & effect);
     bool ApplyEffectSettings(AsyncWebServerRequest * pRequest, std::shared_ptr<LEDStripEffect> & effect);
@@ -215,6 +216,7 @@ class CWebServer : public IService
     void ValidateAndSetSetting(AsyncWebServerRequest * pRequest);
     void Reset(AsyncWebServerRequest * pRequest);
     void SetCurrentEffectIndex(AsyncWebServerRequest * pRequest);
+    void SetChannelFrameRate(AsyncWebServerRequest * pRequest);
     void EnableEffect(AsyncWebServerRequest * pRequest);
     void DisableEffect(AsyncWebServerRequest * pRequest);
     void MoveEffect(AsyncWebServerRequest * pRequest);

@@ -36,23 +36,135 @@ void SaveEffectManagerConfig();
 
 void EffectManager::SetCurrentEffectIndex(size_t i)
 {
+    SetEffectIndex(kAllChannels, i);
+}
+
+// SetEffectIndex
+//
+// Points one channel, or every channel, at an effect. Selecting for all channels
+// collapses back to a single shared effect instance with rotation and cross-fade
+// running, which is the behavior the device has always had. Selecting for one
+// channel switches to independent mode, where each strip draws its own clone.
+
+bool EffectManager::SetEffectIndex(int channel, size_t effectIndex)
+{
     std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
 
-    if (i >= _vEffects.size())
+    if (effectIndex >= _vEffects.size())
     {
-        debugW("Invalid index for SetCurrentEffectIndex");
-        return;
+        debugW("Invalid effect index %zu for SetEffectIndex", effectIndex);
+        return false;
     }
-    _iCurrentEffect = i;
-    _effectStartTime = millis();
 
-    StartEffect();
-    SaveCurrentEffectIndex();
+    if (channel == kAllChannels)
+    {
+        ResumeSharedPlayback();
+
+        for (auto& ch : _channels)
+            ch.index = effectIndex;
+
+        _iCurrentEffect = effectIndex;
+        _effectStartTime = millis();
+
+        StartEffect();
+        SaveCurrentEffectIndex();
+
+        {
+            std::lock_guard listenerGuard(_listenerMutex);
+            INFORM_EVENT_LISTENERS(_effectEventListeners, IEffectEventListener::OnCurrentEffectChanged, effectIndex);
+        }
+
+        return true;
+    }
+
+    if (channel < 0 || static_cast<size_t>(channel) >= _channels.size())
+    {
+        debugW("Invalid channel %d for SetEffectIndex", channel);
+        return false;
+    }
+
+    const auto channelIndex = static_cast<size_t>(channel);
+    const size_t previousIndex = _channels[channelIndex].index;
+
+    _channels[channelIndex].index = effectIndex;
+
+    if (!_channelsIndependent)
+    {
+        // First per-channel pin. Every other channel keeps showing what it was
+        // already showing, which is the shared effect.
+        for (size_t i = 0; i < _channels.size(); i++)
+            if (i != channelIndex)
+                _channels[i].index = _iCurrentEffect;
+
+        if (!EnterIndependentMode())
+        {
+            _channels[channelIndex].index = previousIndex;
+            debugW("Could not build per-channel effects, so staying in shared mode");
+            return false;
+        }
+    }
+    else
+    {
+        auto effect = MakeChannelEffect(channelIndex, effectIndex);
+
+        if (!effect)
+        {
+            _channels[channelIndex].index = previousIndex;
+            return false;
+        }
+
+        _channels[channelIndex].effect = std::move(effect);
+        _channels[channelIndex].nextDrawMs = millis();
+        ClearChannelWhites(_channels[channelIndex]);
+    }
+
+    SaveEffectManagerConfig();
 
     {
         std::lock_guard listenerGuard(_listenerMutex);
-        INFORM_EVENT_LISTENERS(_effectEventListeners, IEffectEventListener::OnCurrentEffectChanged, i);
+        INFORM_EVENT_LISTENERS(_effectEventListeners, IEffectEventListener::OnCurrentEffectChanged, effectIndex);
     }
+
+    return true;
+}
+
+// SetChannelFrameRate
+//
+// Overrides how often a channel is drawn, independent of what its effect asks for
+// via DesiredFramesPerSecond(). 0 hands the channel back to the effect's own rate.
+// Only meaningful in independent mode; in shared mode the one effect's rate governs.
+
+bool EffectManager::SetChannelFrameRate(int channel, uint fps)
+{
+    std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
+
+    // A cap well above any LED strip's practical refresh rate, just to keep a
+    // fat-fingered API call from turning into a divide-by-tiny-interval spin.
+    constexpr uint maxFrameRate = 1000;
+
+    if (fps > maxFrameRate)
+    {
+        debugW("Frame rate %u out of range for channel %d", fps, channel);
+        return false;
+    }
+
+    if (channel == kAllChannels)
+    {
+        for (auto& ch : _channels)
+            ch.fpsOverride = fps;
+    }
+    else if (channel < 0 || static_cast<size_t>(channel) >= _channels.size())
+    {
+        debugW("Invalid channel %d for SetChannelFrameRate", channel);
+        return false;
+    }
+    else
+    {
+        _channels[static_cast<size_t>(channel)].fpsOverride = fps;
+    }
+
+    SaveEffectManagerConfig();
+    return true;
 }
 
 void EffectManager::PlayAll(bool bPlayAll)

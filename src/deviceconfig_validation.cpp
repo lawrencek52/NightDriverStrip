@@ -34,7 +34,7 @@ SuccessResultWithMessage DeviceConfig::ValidateTopology(uint16_t width, uint16_t
         };
     }
 
-    if (IsFixedMatrixBuild())
+    if (IsHub75Build())
     {
         if (width != GetCompiledMatrixWidth() || height != GetCompiledMatrixHeight())
             return { false, DeviceConfigInternal::RecompileNeededMessage() };
@@ -65,7 +65,7 @@ SuccessResultWithMessage DeviceConfig::ValidateStripSettings(size_t channelCount
     if (channelCount > GetCompiledChannelCount())
         return { false, DeviceConfigInternal::RecompileNeededMessage() };
 
-    if (IsFixedMatrixBuild())
+    if (IsHub75Build())
     {
         if (channelCount != GetCompiledChannelCount())
             return { false, DeviceConfigInternal::RecompileNeededMessage() };

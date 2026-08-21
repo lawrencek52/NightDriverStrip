@@ -80,7 +80,7 @@ static void PrepareWiFiActivityPin()
     l_WiFiActivityActive = false;
 }
 
-static void UpdateWiFiActivityPin(size_t wifiPixelsDrawn, size_t localPixelsDrawn)
+static void UpdateWiFiActivityPin(uint16_t wifiPixelsDrawn, uint16_t localPixelsDrawn)
 {
     if (wifiPixelsDrawn > 0)
     {
@@ -96,7 +96,7 @@ static void PrepareWiFiActivityPin()
 {
 }
 
-static void UpdateWiFiActivityPin(size_t, size_t)
+static void UpdateWiFiActivityPin(uint16_t, uint16_t)
 {
 }
 
@@ -114,7 +114,7 @@ std::shared_ptr<LEDStripEffect> GetSpectrumAnalyzer(CRGB color);    // Defined i
 //
 // Draws from WiFi color data if available, returns pixels drawn this frame
 
-size_t WiFiDraw()
+uint16_t WiFiDraw()
 {
     // Builds with INCOMING_WIFI_ENABLED=0 never create the buffer managers,
     // but this path is still reachable whenever WiFi itself is connected.
@@ -123,7 +123,7 @@ size_t WiFiDraw()
 
     std::lock_guard guard(g_buffer_mutex);
 
-    size_t pixelsDrawn = 0;
+    uint16_t pixelsDrawn = 0;
     for (auto& bufferManager : g_ptrSystem->GetBufferManagers())
     {
 
@@ -156,7 +156,7 @@ size_t WiFiDraw()
             if (pBuffer)
             {
                 l_usLastWifiDraw = micros();
-                debugV("Calling LEDBuffer::Draw from wire with %zu/%zu pixels.", pixelsDrawn, pBuffer->_pStrand->GetLEDCount());
+                debugV("Calling LEDBuffer::Draw from wire with %d/%zu pixels.", pixelsDrawn, pBuffer->_pStrand->GetLEDCount());
                 pBuffer->DrawBuffer();
                 // In case we drew some pixels and then drew 0 due a failure, we want to return a positive
                 // number of pixels drawn so the caller knows we did in fact render.
@@ -164,7 +164,7 @@ size_t WiFiDraw()
             }
         }
     }
-    debugV("WifIDraw claims to have drawn %zu pixels", pixelsDrawn);
+    debugV("WifIDraw claims to have drawn %d pixels", pixelsDrawn);
     return pixelsDrawn;
 }
 
@@ -172,7 +172,7 @@ size_t WiFiDraw()
 //
 // Draws from effects table rather than from WiFi data.  Returns the number of LEDs rendered.
 
-size_t LocalDraw()
+uint16_t LocalDraw()
 {
     if (!g_ptrSystem->HasEffectManager())
     {
@@ -222,7 +222,7 @@ size_t LocalDraw()
 //
 // Returns the amount of time to wait patiently until it's time to draw the next frame, up to one second max
 
-int CalcDelayUntilNextFrame(double frameStartTime, size_t localPixelsDrawn, size_t wifiPixelsDrawn)
+int CalcDelayUntilNextFrame(double frameStartTime, uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
 {
     constexpr auto kMinDelay = 0.001;
 
@@ -236,8 +236,10 @@ int CalcDelayUntilNextFrame(double frameStartTime, size_t localPixelsDrawn, size
         {
             std::lock_guard effectGuard(g_effect_manager_mutex);
             auto& effectManager = g_ptrSystem->GetEffectManager();
+            // Paces on the fastest channel when the channels run different effects;
+            // each channel is then gated to its own rate inside EffectManager::Update().
             if (effectManager.HasCurrentEffect())
-                fpsRaw = static_cast<double>(effectManager.GetCurrentEffect().DesiredFramesPerSecond());
+                fpsRaw = static_cast<double>(effectManager.GetDesiredFramesPerSecond());
         }
         // If FPS is invalid (<= 0 or non-finite), treat as unlimited (0s minimum frame time).
         const double minimumFrameTime = (!std::isfinite(fpsRaw) || fpsRaw <= 0.0) ? 0.0 : (1.0 / fpsRaw);
@@ -284,14 +286,6 @@ int CalcDelayUntilNextFrame(double frameStartTime, size_t localPixelsDrawn, size
     }
 
     return g_Values.FreeDrawTime * MILLIS_PER_SECOND;
-#else
-    // Fixed-rate targets (such as the Tab5 LCD backend) do not derive their
-    // cadence from the active effect or queued WiFi frames.
-    (void)frameStartTime;
-    (void)localPixelsDrawn;
-    (void)wifiPixelsDrawn;
-    g_Values.FreeDrawTime = static_cast<double>(MILLIS_PER_FRAME) / MILLIS_PER_SECOND;
-    return MILLIS_PER_FRAME;
 #endif
 }
 
@@ -390,8 +384,8 @@ void IRAM_ATTR RenderService::Run()
     {
         g_Values.AppTime.NewFrame();
 
-        size_t localPixelsDrawn   = 0;
-        size_t wifiPixelsDrawn    = 0;
+        uint16_t localPixelsDrawn   = 0;
+        uint16_t wifiPixelsDrawn    = 0;
         double frameStartTime       = g_Values.AppTime.FrameStartTime();
 
         {

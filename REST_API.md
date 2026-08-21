@@ -6,6 +6,8 @@
 - [Endpoints](#endpoints)
   - [Get effect list information](#get-effect-list-information)
   - [Set current effect](#set-current-effect)
+  - [Per-channel effects](#per-channel-effects)
+  - [Set channel frame rate](#set-channel-frame-rate)
   - [Next effect](#next-effect)
   - [Previous effect](#previous-effect)
   - [Disable effect](#disable-effect)
@@ -71,11 +73,48 @@ This endpoint can be used to set the effect that the device is currently showing
 | URL | `/currentEffect` | |
 | Method | POST | |
 | Parameters | `currentEffectIndex` | The (zero-based) integer index of the effect to activate in the device's effect list. |
+| | `channel` | Optional. The (zero-based) integer index of the output channel to activate the effect on. When omitted, the effect is activated on every channel. See [Per-channel effects](#per-channel-effects). |
 | Response | 200 (OK) | An empty OK response. |
+| | 400 (Bad Request) | The channel index is out of range, or a per-channel instance of the effect could not be created. |
+
+### Per-channel effects
+
+On devices with more than one output channel (`NUM_CHANNELS` greater than 1), each channel can show a different effect. The device is in one of two modes:
+
+- **Shared** (the default): one effect instance draws to every channel, effect rotation runs on the configured interval, and cross-fading between effects is active. This is the behavior of devices without per-channel support.
+- **Independent**: each channel draws its own instance of the effect it is pinned to, at its own frame rate. Because a pinned channel is meant to stay put, **effect rotation is switched off** while the channels are independent, and the fader is held wide open.
+
+Posting to `/currentEffect` **with** a `channel` parameter switches to independent mode. Posting **without** one returns to shared mode and resumes rotation, as do the [`/nextEffect`](#next-effect) and [`/previousEffect`](#previous-effect) endpoints, since advancing the effect is a device-wide request that rotation-off mode could not otherwise honor.
+
+The [`/effects` endpoint](#get-effect-list-information) reports the current state in these properties:
+
+| Property | Explanation |
+| - | - |
+| `channelsIndependent` | `true` when each channel is drawing its own effect. |
+| `channelEffects` | One (zero-based) effect index per output channel. In shared mode every entry is the device-wide current effect. |
+| `channelFrameRates` | The frame rate in effect for each channel: its override if one is set, otherwise the rate its effect asks for. |
+| `channelFrameRateOverrides` | The configured override per channel, or 0 where the channel follows its effect's own rate. |
+
+The pre-existing `currentEffect` property continues to report the device-wide current effect index, so clients that predate per-channel support are unaffected.
+
+Per-channel selections and frame rate overrides are persisted with the rest of the effect configuration and restored on reboot.
+
+### Set channel frame rate
+
+This endpoint overrides how often an output channel is drawn, independent of the frame rate its effect requests. The draw loop paces itself on the fastest channel and gates the slower ones individually, so a slow effect on one strip does not throttle a fast effect on another.
+
+| Property | Value | Explanation |
+| - | - | - |
+| URL | `/channelFrameRate` | |
+| Method | POST | |
+| Parameters | `fps` | Frames per second, 0 to 1000. 0 returns the channel to the frame rate its effect asks for. |
+| | `channel` | Optional. The (zero-based) integer index of the output channel. When omitted, the frame rate is applied to every channel. |
+| Response | 200 (OK) | An empty OK response. |
+| | 400 (Bad Request) | The channel index or frame rate is out of range. |
 
 ### Next effect
 
-This endpoint can be used to activate the next effect.
+This endpoint can be used to activate the next effect. If the output channels are showing [per-channel effects](#per-channel-effects), this returns them to a single shared effect.
 
 | Property | Value | Explanation |
 | - | - | - |
@@ -86,7 +125,7 @@ This endpoint can be used to activate the next effect.
 
 ### Previous effect
 
-This endpoint can be used to activate the previous effect.
+This endpoint can be used to activate the previous effect. If the output channels are showing [per-channel effects](#per-channel-effects), this returns them to a single shared effect.
 
 | Property | Value | Explanation |
 | - | - | - |
@@ -390,7 +429,7 @@ The payload of the textual event message is a small JSON object with one propert
 
 | Event | Property | Value |
 | - | - | - |
-| Current/active effect changed | `currentEffectIndex` | The zero-based index of the effect that is now active, with regards to the effect list returned by the [`/effects` endpoint](#get-effect-list-information). |
+| Current/active effect changed | `currentEffectIndex` | The zero-based index of the effect that is now active, with regards to the effect list returned by the [`/effects` endpoint](#get-effect-list-information). This event is also sent when an effect is activated on a single channel, in which case it carries the newly activated effect's index and the [`/effects` endpoint](#get-effect-list-information) should be re-read to find out which channels are showing what. |
 | Effect list contents have changed | `effectListDirty` | The contents of the effects list as returned by the [`/effects` endpoint](#get-effect-list-information) have changed in a way that warrant a reload of that list. Acting on later webSocket events without reloading the effects list may lead to a misrepresentation of the actual status. |
 | Enabled state for an effect has changed | `effectsEnabledState` | The property will contain an array with one entry. That entry is a JSON object with two properties:<br>- `index`: the zero-based index of the effect of which the enabled state has changed<br>- `enabled`: boolean that indicates if the effect is enabled (`true`) or disabled (`false`) |
 | "Next effect" interval has changed | `interval` | The duration that an effect will be active before the device proceeds to the next enabled effect in the effects list, in seconds. |

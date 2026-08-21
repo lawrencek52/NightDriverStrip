@@ -154,6 +154,71 @@ LEDStripEffect& EffectManager::GetCurrentEffect() const
     return *(_tempEffect ? _tempEffect : _vEffects[index]);
 }
 
+bool EffectManager::AreChannelsIndependent() const
+{
+    std::lock_guard effectGuard(g_effect_manager_mutex);
+    return _channelsIndependent;
+}
+
+size_t EffectManager::GetChannelEffectIndex(size_t channel) const
+{
+    std::lock_guard effectGuard(g_effect_manager_mutex);
+
+    // Channels that aren't pinned track the shared current effect, so reporting
+    // _iCurrentEffect for them keeps the API answer honest in both modes.
+    if (channel >= _channels.size())
+        return _iCurrentEffect;
+
+    return _channelsIndependent ? _channels[channel].index : _iCurrentEffect;
+}
+
+uint EffectManager::GetChannelFrameRateOverride(size_t channel) const
+{
+    std::lock_guard effectGuard(g_effect_manager_mutex);
+    return channel < _channels.size() ? _channels[channel].fpsOverride : 0;
+}
+
+uint EffectManager::GetChannelFrameRate(size_t channel) const
+{
+    std::lock_guard effectGuard(g_effect_manager_mutex);
+
+    if (channel >= _channels.size())
+        return 0;
+
+    if (_channels[channel].fpsOverride > 0)
+        return _channels[channel].fpsOverride;
+
+    // In shared mode the channel has no instance of its own, so the rate that
+    // actually applies is the shared effect's.
+    if (!_channelsIndependent || !_channels[channel].effect)
+        return HasCurrentEffect() ? GetCurrentEffect().DesiredFramesPerSecond() : 0;
+
+    return EffectiveFrameRate(_channels[channel]);
+}
+
+// GetDesiredFramesPerSecond
+//
+// The rate the draw loop paces itself at. With independent channels that's the
+// fastest channel, since the slower ones are gated individually in DrawChannel();
+// pacing on anything less would throttle the fast strip.
+
+size_t EffectManager::GetDesiredFramesPerSecond() const
+{
+    std::lock_guard effectGuard(g_effect_manager_mutex);
+
+    if (_tempEffect)
+        return _tempEffect->DesiredFramesPerSecond();
+
+    if (!_channelsIndependent)
+        return HasCurrentEffect() ? GetCurrentEffect().DesiredFramesPerSecond() : 0;
+
+    size_t fps = 0;
+    for (const auto& channel : _channels)
+        fps = std::max<size_t>(fps, EffectiveFrameRate(channel));
+
+    return fps;
+}
+
 String EffectManager::GetCurrentEffectName() const
 {
     // Return a copy while holding the effect lock. Returning a reference here

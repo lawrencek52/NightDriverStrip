@@ -352,10 +352,6 @@ SuccessResultWithMessage CWebServer::SetSettingsIfPresent(AsyncWebServerRequest 
         const auto driver = pRequest->getParam(DeviceConfig::OutputDriverTag, true, false)->value();
         if (driver == "hub75")
             runtimeConfig.outputs.driver = DeviceConfig::OutputDriver::HUB75;
-        else if (driver == "m5lcd")
-            runtimeConfig.outputs.driver = DeviceConfig::OutputDriver::M5LCD;
-        else if (driver == "apa102")
-            runtimeConfig.outputs.driver = DeviceConfig::OutputDriver::APA102;
         else if (driver == "ws281x")
             runtimeConfig.outputs.driver = DeviceConfig::OutputDriver::WS281x;
         else

@@ -68,38 +68,6 @@
             FillGetNoiseImpl();
     }
 
-    void GFXBase::FillGetNoiseEdges() const
-    {
-        // The general fractional X/Y movers consume only noise[0][y] and
-        // noise[x][0]. Effects using just those movers do not need a full
-        // width-by-height Perlin refresh.
-        if (EnsureNoise())
-            return;
-
-        const auto updateSample = [this](uint32_t x, uint32_t y)
-        {
-            const int32_t xOffset =
-                _ptrNoise->noise_scale_x *
-                (static_cast<int32_t>(x) - static_cast<int32_t>(_width / 2));
-            const int32_t yOffset =
-                _ptrNoise->noise_scale_y *
-                (static_cast<int32_t>(y) - static_cast<int32_t>(_height / 2));
-            const uint8_t data =
-                inoise16(_ptrNoise->noise_x + xOffset,
-                         _ptrNoise->noise_y + yOffset,
-                         _ptrNoise->noise_z) >> 8;
-            const uint8_t oldData = _ptrNoise->noise[x][y];
-            _ptrNoise->noise[x][y] =
-                scale8(oldData, _ptrNoise->noisesmoothing) +
-                scale8(data, 256 - _ptrNoise->noisesmoothing);
-        };
-
-        for (uint32_t y = 0; y < _height; ++y)
-            updateSample(0, y);
-        for (uint32_t x = 1; x < _width; ++x)
-            updateSample(x, 0);
-    }
-
     template<>
     void GFXBase::MoveFractionalNoiseX<NoiseApproach::MRI>(uint8_t amt, uint8_t shift)
     {
@@ -156,45 +124,6 @@
     void GFXBase::MoveFractionalNoiseX<NoiseApproach::General>(uint8_t amt, uint8_t shift)
     {
         EnsureNoise();
-        const bool rowMajor =
-            _width < 2 || (xy(0, 0) == 0 && xy(1, 0) == 1 && xy(0, 1) == _width);
-
-        // LCD and HUB75 surfaces are row-major. Avoid routing every source and
-        // destination pixel through the global XY() helper; that lookup reaches
-        // through the system/effect manager and dominates this full-frame warp
-        // on larger logical displays such as the Tab5.
-        if (rowMajor)
-        {
-            for (uint32_t y = 0; y < _height; ++y)
-            {
-                const int32_t amount =
-                    (static_cast<int32_t>(_ptrNoise->noise[0][y]) - 128) * 2 * amt +
-                    shift * 256;
-                const int32_t delta = abs(amount) >> 8;
-                const int32_t fraction = abs(amount) & 255;
-                const uint8_t weightA = ease8InOutApprox(255 - fraction);
-                const uint8_t weightB = ease8InOutApprox(fraction);
-                CRGB *line = leds + static_cast<size_t>(y) * _width;
-
-                for (uint32_t x = 0; x < _width; ++x)
-                {
-                    const int32_t zD = amount < 0
-                        ? static_cast<int32_t>(x) - delta
-                        : static_cast<int32_t>(x) + delta;
-                    const int32_t zF = amount < 0 ? zD - 1 : zD + 1;
-
-                    CRGB pixelA = zD >= 0 && zD < static_cast<int32_t>(_width)
-                        ? line[zD]
-                        : CRGB::Black;
-                    CRGB pixelB = zF >= 0 && zF < static_cast<int32_t>(_width)
-                        ? line[zF]
-                        : CRGB::Black;
-                    line[x] = pixelA.nscale8(weightA) + pixelB.nscale8(weightB);
-                }
-            }
-            return;
-        }
-
         // Aligning with Approach::One while keeping the "Approach::Two" optimized behavior.
         // We use int32_t for the 'amount' and 'delta' as they can be large or negative.
         for (uint32_t y = 0; y < _height; y++)
@@ -289,41 +218,6 @@
     void GFXBase::MoveFractionalNoiseY<NoiseApproach::General>(uint8_t amt, uint8_t shift)
     {
         EnsureNoise();
-        const bool rowMajor =
-            _width < 2 || (xy(0, 0) == 0 && xy(1, 0) == 1 && xy(0, 1) == _width);
-
-        if (rowMajor)
-        {
-            for (uint32_t x = 0; x < _width; ++x)
-            {
-                const int32_t amount =
-                    (static_cast<int32_t>(_ptrNoise->noise[x][0]) - 128) * 2 * amt +
-                    shift * 256;
-                const int32_t delta = abs(amount) >> 8;
-                const int32_t fraction = abs(amount) & 255;
-                const uint8_t weightA = ease8InOutApprox(255 - fraction);
-                const uint8_t weightB = ease8InOutApprox(fraction);
-
-                for (uint32_t y = 0; y < _height; ++y)
-                {
-                    const int32_t zD = amount < 0
-                        ? static_cast<int32_t>(y) - delta
-                        : static_cast<int32_t>(y) + delta;
-                    const int32_t zF = amount < 0 ? zD - 1 : zD + 1;
-
-                    CRGB pixelA = zD >= 0 && zD < static_cast<int32_t>(_height)
-                        ? leds[static_cast<size_t>(zD) * _width + x]
-                        : CRGB::Black;
-                    CRGB pixelB = zF >= 0 && zF < static_cast<int32_t>(_height)
-                        ? leds[static_cast<size_t>(zF) * _width + x]
-                        : CRGB::Black;
-                    leds[static_cast<size_t>(y) * _width + x] =
-                        pixelA.nscale8(weightA) + pixelB.nscale8(weightB);
-                }
-            }
-            return;
-        }
-
         for (uint32_t x = 0; x < _width; x++)
         {
             int32_t amount = ((int32_t)_ptrNoise->noise[x][0] - 128) * 2 * amt + shift * 256;
@@ -364,6 +258,6 @@ void GFXBase::PrepareFrame()
 {
 }
 
-void GFXBase::PostProcessFrame(size_t, size_t)
+void GFXBase::PostProcessFrame(uint16_t, uint16_t)
 {
 }

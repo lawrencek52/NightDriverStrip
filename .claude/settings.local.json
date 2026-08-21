@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Test-Path *)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\platformio.exe\" run -e xiao_sense 2>&1 | Select-Object -Last 70)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\platformio.exe\" run -e demo -e mesmerizer 2>&1 | Select-String -Pattern \"error|Error|SUCCESS|FAILED|succeeded|failed\" | Select-Object -Last 40)",
+      "PowerShell(npx eslint site/app.js 2>&1 | Select-Object -Last 30)",
+      "PowerShell($node = Get-Command node -ErrorAction SilentlyContinue; if \\($node\\) { \"node: $\\($node.Source\\)\" } else { \"node not found\" }; & \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\python.exe\" tools/check_syntax.py 2>&1 | Select-Object -Last 20)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\python.exe\" tools/pio_audit.py 2>&1 | Select-Object -Last 20; \"--- baked site timestamps ---\"; Get-ChildItem site/dist -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.platformio\\\\python3\\\\python.exe\" \"$env:TEMP\\\\nd_jscheck.py\" site\\\\app.js; \"--- baseline: same check against git HEAD version ---\"; git show HEAD:site/app.js > \"$env:TEMP\\\\app_head.js\"; & \"$env:USERPROFILE\\\\.platformio\\\\python3\\\\python.exe\" \"$env:TEMP\\\\nd_jscheck.py\" \"$env:TEMP\\\\app_head.js\")",
+      "PowerShell(& \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\platformio.exe\" run -e xiao_sense 2>&1 | Select-String -Pattern \"error|SUCCESS|FAILED|succeeded|failed|RAM:|Flash:\" | Select-Object -Last 15)",
+      "PowerShell($cf = Get-Command clang-format -ErrorAction SilentlyContinue; if \\($cf\\) { \"clang-format: $\\($cf.Source\\)\" } else { \"clang-format not on PATH\" })",
+      "PowerShell(& \"$env:USERPROFILE\\\\.platformio\\\\penv\\\\Scripts\\\\platformio.exe\" run -e atomlight -e ledstrip_feather_hexagon -e trimlight 2>&1 | Select-String -Pattern \" error|SUCCESS|FAILED|succeeded|failed\" | Select-Object -Last 20)",
+      "Read(//c/Users/Lawrence/AppData/Local/Temp/claude/C--Users-Lawrence-OneDrive-Documents-PlatformIO-Projects-Xiao-ESP32s3-NightDriverStrip/47423188-e336-4d7f-b2ae-2763bc6a1376/tasks/**)",
+      "PowerShell(Stop-Process *)"
+    ]
+  }
+}

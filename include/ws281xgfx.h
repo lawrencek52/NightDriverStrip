@@ -60,7 +60,7 @@ public:
     //
     // PostProcessFrame sends the data to the LED strip.  If it's fewer than the size of the strip, we only send that many.
 
-    void PostProcessFrame(size_t localPixelsDrawn, size_t wifiPixelsDrawn) override;
+    void PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn) override;
 };
 
 #if HEXAGON
@@ -126,7 +126,7 @@ class HexagonGFX : public WS281xGFX
     // the Xth pixel in row Y.  It's up to you not to overrun the width of that row, but
     // it will just blend into the next row if you do.
 
-    inline virtual size_t xy(uint16_t x, uint16_t y) const noexcept override
+    inline virtual uint16_t xy(uint16_t x, uint16_t y) const noexcept override
     {
         auto start = getStartIndexOfRow(y);
         if (y & 0x01)

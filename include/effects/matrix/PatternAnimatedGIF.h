@@ -192,28 +192,20 @@ class PatternAnimatedGIF : public EffectWithId<PatternAnimatedGIF>
     static void drawPixelCallback(int16_t x, int16_t y, uint8_t red, uint8_t green, uint8_t blue)
     {
         auto& g = g_ptrSystem->GetEffectManager().g(0);
-        const auto& state = SharedGIFDecoderState();
-        const CRGB color(red, green, blue);
 
-        if (state._scaleX >= 1.0f && state._scaleY >= 1.0f)
+        // Apply scaling transformation
+        int16_t scaledX = (int16_t)(x * SharedGIFDecoderState()._scaleX) + SharedGIFDecoderState()._offsetX;
+        int16_t scaledY = (int16_t)(y * SharedGIFDecoderState()._scaleY) + SharedGIFDecoderState()._offsetY;
+
+        if (false == g.isValidPixel(scaledX, scaledY))
         {
-            // Use adjacent transformed source boundaries so fractional scales
-            // cover every destination pixel without gaps.
-            const int16_t x0 = static_cast<int16_t>(x * state._scaleX) + state._offsetX;
-            const int16_t y0 = static_cast<int16_t>(y * state._scaleY) + state._offsetY;
-            const int16_t x1 = static_cast<int16_t>((x + 1) * state._scaleX) + state._offsetX;
-            const int16_t y1 = static_cast<int16_t>((y + 1) * state._scaleY) + state._offsetY;
-
-            g.fillRectangle(x0, y0, x1, y1, color);
+            debugV("drawPixelCallback: scaled pixel out of bounds: %d, %d (from source %d, %d)", scaledX, scaledY, x, y);
             return;
         }
 
-        // Preserve the existing nearest-neighbor behavior when fitting a GIF
-        // onto a matrix smaller than its source dimensions.
-        const int16_t scaledX = static_cast<int16_t>(x * state._scaleX) + state._offsetX;
-        const int16_t scaledY = static_cast<int16_t>(y * state._scaleY) + state._offsetY;
-        if (g.isValidPixel(scaledX, scaledY))
-            g.leds[g.xy(scaledX, scaledY)] = color;
+        // If we're scaling down (scale < 1.0), we might want to sample multiple source pixels
+        // For now, we use simple nearest-neighbor scaling
+        g.leds[XY(scaledX, scaledY)] = CRGB(red, green, blue);
     }
 
     // drawLineCallback
@@ -291,21 +283,17 @@ public:
         uint16_t gifWidth = gif->second._width;
         uint16_t gifHeight = gif->second._height;
 
-        float scaleX;
-        float scaleY;
-        if (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32)
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+
+        // If GIF is larger than matrix, calculate scaling to fit
+        if (gifWidth > MATRIX_WIDTH || gifHeight > MATRIX_HEIGHT)
         {
-            // Large framebuffer builds need to use the available surface.
-            scaleX = static_cast<float>(MATRIX_WIDTH) / gifWidth;
-            scaleY = static_cast<float>(MATRIX_HEIGHT) / gifHeight;
-        }
-        else
-        {
-            // Preserve the original small-panel behavior: only downscale,
-            // retain aspect ratio, and center the result.
-            const float scale = std::min(
-                1.0f, std::min(static_cast<float>(MATRIX_WIDTH) / gifWidth,
-                               static_cast<float>(MATRIX_HEIGHT) / gifHeight));
+            scaleX = (float)MATRIX_WIDTH / (float)gifWidth;
+            scaleY = (float)MATRIX_HEIGHT / (float)gifHeight;
+
+            // Use the smaller scale factor to maintain aspect ratio (best fit)
+            float scale = min(scaleX, scaleY);
             scaleX = scale;
             scaleY = scale;
         }

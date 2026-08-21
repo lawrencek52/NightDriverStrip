@@ -253,6 +253,8 @@ void SoundAnalyzerBase::SampleAudio()
     // Those not active in the current configuration will return 0 immediately.
     if (bytesRead == 0) bytesRead = SampleI2S_Modern();
     if (bytesRead == 0) bytesRead = SampleI2S_Legacy();
+    if (bytesRead == 0) bytesRead = SamplePDM_Modern();
+    if (bytesRead == 0) bytesRead = SamplePDM_Legacy();
     if (bytesRead == 0) bytesRead = SampleADC_Modern();
     if (bytesRead == 0) bytesRead = SampleADC_Legacy();
 #endif
@@ -364,6 +366,8 @@ void SoundAnalyzerBase::InitAudioInput()
     // Digital Microphones
     InitI2S_Modern();
     InitI2S_Legacy();
+    InitPDM_Modern();
+    InitPDM_Legacy();
 
     // Analog Microphones
     InitADC_Modern();
@@ -939,6 +943,7 @@ template class SoundAnalyzer<kParamsMesmerizer>;
 template class SoundAnalyzer<kParamsM5>;
 template class SoundAnalyzer<kParamsM5Plus2>;
 template class SoundAnalyzer<kParamsI2SExternal>;
+template class SoundAnalyzer<kParamsPDM>;
 
 #endif
 

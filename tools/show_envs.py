@@ -28,8 +28,15 @@
 #    platformio.ini.
 #    It is used by this project's GitHub CI workflow.
 #
-#    The script resolves platformio.ini relative to its own location, so it can
-#    be executed from any working directory.
+#    Note that it expects to be executed from the project root directory. That is,
+#    it needs to be run like this:
+#
+#    $ tools/show_envs.py
+#
+#    Instead of:
+#
+#    $ cd tools
+#    $ ./show_envs.py
 #
 # History:     Aug-08-2023         Rbergen      Added header
 #              Aug-27-2023         Rbergen      Make importable
@@ -38,17 +45,10 @@
 
 import configparser
 import json
-from pathlib import Path
 
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PLATFORMIO_INI = PROJECT_ROOT / 'platformio.ini'
-
-
-def getenvs(config_path=PLATFORMIO_INI):
+def getenvs():
     config = configparser.ConfigParser()
-    with Path(config_path).open(encoding='utf-8') as config_file:
-        config.read_file(config_file)
+    config.read('platformio.ini')
 
     envs = []
 

@@ -82,18 +82,6 @@ extern const GFXfont Apple5x7 PROGMEM;
 class PatternPongClock : public EffectWithId<PatternPongClock>
 {
   private:
-    static constexpr float kReferenceWidth = 64.0f;
-    static constexpr float kReferenceHeight = 32.0f;
-    static constexpr float kBallScaleX = MATRIX_WIDTH / kReferenceWidth;
-    static constexpr float kBallScaleY = MATRIX_HEIGHT / kReferenceHeight;
-    static constexpr float kInitialBallSpeedX = kBallScaleX;
-    static constexpr float kInitialBallSpeedY = 0.5f * kBallScaleY;
-    static constexpr float kBallFlickY = 0.5f * kBallScaleY;
-    static constexpr float kMaxBallSpeedX = MAXSPEED * kBallScaleX;
-    static constexpr float kMaxBallSpeedY = 2.0f * kBallScaleY;
-    static constexpr int kBatStep =
-        std::max(1, static_cast<int>(kBallScaleY + 0.5f));
-
     float ballpos_x, ballpos_y;
     uint8_t erase_x = 10; // holds ball old pos so we can erase it, set to blank area of screen initially.
     uint8_t erase_y = 10;
@@ -197,20 +185,20 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
             // pick random ball direction
             if (random(0, 2) > 0)
             {
-                ballvel_x = kInitialBallSpeedX;
+                ballvel_x = 1;
             }
             else
             {
-                ballvel_x = -kInitialBallSpeedX;
+                ballvel_x = -1;
             }
 
             if (random(0, 2) > 0)
             {
-                ballvel_y = kInitialBallSpeedY;
+                ballvel_y = 0.5;
             }
             else
             {
-                ballvel_y = -kInitialBallSpeedY;
+                ballvel_y = -0.5;
             }
             // draw bats in initial positions
             bat1miss = 0;
@@ -248,10 +236,8 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
         // Define the "Thinking zone" around center.  Player will set their targets based on what they see here.
 
         constexpr float LOOKAHEAD = 1.0;
-        constexpr float leftEdge =
-            MATRIX_WIDTH / 2 - kMaxBallSpeedX * LOOKAHEAD;
-        constexpr float rightEdge =
-            MATRIX_WIDTH / 2 + kMaxBallSpeedX * LOOKAHEAD;
+        constexpr float leftEdge  = MATRIX_WIDTH / 2 - MAXSPEED * LOOKAHEAD;
+        constexpr float rightEdge = MATRIX_WIDTH / 2 + MAXSPEED * LOOKAHEAD;
 
         // If ball going leftwards towards BAT1,
 
@@ -321,14 +307,14 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
         // if bat y greater than target y move down until hit 0 (don't go any further or bat will move off screen)
         if (bat1_y > bat1_target_y && bat1_y > 0)
         {
-            bat1_y = std::max(bat1_target_y, bat1_y - kBatStep);
+            bat1_y--;
             bat1_update = 1;
         }
 
         // if bat y less than target y move up until hit 10 (as bat is 6)
         if (bat1_y < bat1_target_y && bat1_y < MATRIX_HEIGHT - BAT_HEIGHT)
         {
-            bat1_y = std::min(bat1_target_y, bat1_y + kBatStep);
+            bat1_y++;
             bat1_update = 1;
         }
 
@@ -339,15 +325,14 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
         // if bat y greater than target y move down until hit 0
         if (bat2_y > bat2_target_y && bat2_y > 0)
         {
-            bat2_y = std::max(bat2_target_y, bat2_y - kBatStep);
+            bat2_y--;
             bat2_update = 1;
         }
 
         // if bat y less than target y move up until hit max of 10 (as bat is 6)
-        if (bat2_y < bat2_target_y &&
-            bat2_y < MATRIX_HEIGHT - BAT_HEIGHT)
+        if (bat2_y < bat2_target_y && bat2_y < MATRIX_HEIGHT - 6)
         {
-            bat2_y = std::min(bat2_target_y, bat2_y + kBatStep);
+            bat2_y++;
             bat2_update = 1;
         }
 
@@ -381,8 +366,8 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
             if (!random(0, 3))
             { // not true = no flick - just straight rebound and no change to ball y vel
                 ballvel_x = ballvel_x * -SPEEDUP;
-                ballvel_x = std::max(ballvel_x, -kMaxBallSpeedX);
-                ballvel_x = std::min(ballvel_x,  kMaxBallSpeedX);
+                ballvel_x = std::max(ballvel_x, -MAXSPEED);
+                ballvel_x = std::min(ballvel_x,  MAXSPEED);
             }
             else
             {
@@ -411,10 +396,9 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
                 case 0:
                     bat1_target_y = bat1_target_y + random(1, 3);
                     ballvel_x = ballvel_x * -1;
-                    if (ballvel_y < kMaxBallSpeedY)
+                    if (ballvel_y < 2)
                     {
-                        ballvel_y = std::min(
-                            ballvel_y + kBallFlickY, kMaxBallSpeedY);
+                        ballvel_y = ballvel_y + 0.5;
                     }
                     break;
 
@@ -422,9 +406,9 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
                 case 1:
                     bat1_target_y = bat1_target_y - random(1, 3);
                     ballvel_x = ballvel_x * -1;
-                    if (ballvel_y > kInitialBallSpeedY)
+                    if (ballvel_y > 0.5)
                     {
-                        ballvel_y = ballvel_y - kBallFlickY;
+                        ballvel_y = ballvel_y - 0.5;
                     }
                     break;
                 }
@@ -442,8 +426,8 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
             if (!random(0, 3))
             {
                 ballvel_x = ballvel_x * -SPEEDUP; // not true = no flick - just straight rebound and no change to ball y vel
-                ballvel_x = std::max(ballvel_x, -kMaxBallSpeedX);
-                ballvel_x = std::min(ballvel_x,  kMaxBallSpeedX);
+                ballvel_x = std::max(ballvel_x, -MAXSPEED);
+                ballvel_x = std::min(ballvel_x,  MAXSPEED);
             }
             else
             {
@@ -469,23 +453,16 @@ class PatternPongClock : public EffectWithId<PatternPongClock>
                 case 0:
                     bat2_target_y = bat2_target_y + random(1, 3);
                     ballvel_x = ballvel_x * -1;
-                    if (ballvel_y < kMaxBallSpeedY)
-                        ballvel_y = std::min(
-                            ballvel_y +
-                                (static_cast<float>(random(1.0)) + 0.5f) *
-                                    kBallScaleY,
-                            kMaxBallSpeedY);
+                    if (ballvel_y < 2)
+                        ballvel_y = ballvel_y + random(1.0) + 0.5;
                     break;
 
                     // flick down
                 case 1:
                     bat2_target_y = bat2_target_y - random(1, 3);
                     ballvel_x = ballvel_x * -1;
-                    if (ballvel_y > kInitialBallSpeedY)
-                        ballvel_y =
-                            ballvel_y -
-                            (static_cast<float>(random(1.0)) + 0.5f) *
-                                kBallScaleY;
+                    if (ballvel_y > 0.5)
+                        ballvel_y = ballvel_y - random(1.0) - 0.5;
                     break;
                 }
             }

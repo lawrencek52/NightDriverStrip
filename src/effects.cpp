@@ -158,80 +158,13 @@
 DRAM_ATTR allocated_unique_ptr<EffectFactories> g_ptrEffectFactories = nullptr;
 
 #if EFFECTS_FULLMATRIX
-namespace
+void ConfigureMatrixJpegDecoder()
 {
-    struct JpegOutputTransform
-    {
-        uint16_t sourceWidth = 0;
-        uint16_t sourceHeight = 0;
-        uint16_t destinationWidth = 0;
-        uint16_t destinationHeight = 0;
-        int16_t offsetX = 0;
-        int16_t offsetY = 0;
-    };
-
-    JpegOutputTransform jpegOutputTransform;
-}
-
-void ConfigureMatrixJpegDecoder(uint16_t sourceWidth, uint16_t sourceHeight)
-{
-    jpegOutputTransform = {};
-    if (sourceWidth > 0 && sourceHeight > 0)
-    {
-        jpegOutputTransform.sourceWidth = sourceWidth;
-        jpegOutputTransform.sourceHeight = sourceHeight;
-
-        // Preserve the JPEG's aspect ratio while fitting it as large as
-        // possible within the logical matrix.
-        if (MATRIX_WIDTH * sourceHeight <= MATRIX_HEIGHT * sourceWidth)
-        {
-            jpegOutputTransform.destinationWidth = MATRIX_WIDTH;
-            jpegOutputTransform.destinationHeight =
-                (sourceHeight * MATRIX_WIDTH + sourceWidth / 2) / sourceWidth;
-        }
-        else
-        {
-            jpegOutputTransform.destinationHeight = MATRIX_HEIGHT;
-            jpegOutputTransform.destinationWidth =
-                (sourceWidth * MATRIX_HEIGHT + sourceHeight / 2) / sourceHeight;
-        }
-
-        jpegOutputTransform.offsetX =
-            (MATRIX_WIDTH - jpegOutputTransform.destinationWidth) / 2;
-        jpegOutputTransform.offsetY =
-            (MATRIX_HEIGHT - jpegOutputTransform.destinationHeight) / 2;
-    }
-
     TJpgDec.setJpgScale(1);
     TJpgDec.setCallback([](int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
     {
         auto& gfx = g_ptrSystem->GetEffectManager().g();
-        const auto& transform = jpegOutputTransform;
-        if (transform.sourceWidth == 0 || transform.sourceHeight == 0)
-        {
-            gfx.drawRGBBitmap(x, y, bitmap, w, h);
-            return true;
-        }
-
-        for (uint16_t localY = 0; localY < h; ++localY)
-        {
-            const int sourceY = y + localY;
-            const int destinationY0 = transform.offsetY +
-                sourceY * transform.destinationHeight / transform.sourceHeight;
-            const int destinationY1 = transform.offsetY +
-                (sourceY + 1) * transform.destinationHeight / transform.sourceHeight;
-
-            for (uint16_t localX = 0; localX < w; ++localX)
-            {
-                const int sourceX = x + localX;
-                const int destinationX0 = transform.offsetX +
-                    sourceX * transform.destinationWidth / transform.sourceWidth;
-                const int destinationX1 = transform.offsetX +
-                    (sourceX + 1) * transform.destinationWidth / transform.sourceWidth;
-                gfx.fillRectangle(destinationX0, destinationY0, destinationX1, destinationY1,
-                                  GFXBase::from16Bit(bitmap[localY * w + localX]));
-            }
-        }
+        gfx.drawRGBBitmap(x, y, bitmap, w, h);
         return true;
     });
 }

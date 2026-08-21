@@ -45,8 +45,6 @@ std::optional<DeviceConfig::OutputDriver> DeviceConfig::ParseOutputDriverName(co
 {
     if (name == "hub75")
         return OutputDriver::HUB75;
-    if (name == "m5lcd")
-        return OutputDriver::M5LCD;
     if (name == "apa102")
         return OutputDriver::APA102;
     if (name == "ws281x")
@@ -220,11 +218,11 @@ void DeviceConfig::SerializeUnifiedSettingsSchema(JsonObject root) const
 {
     auto topology = root["topology"].to<JsonObject>();
     topology["compiledMaxWidth"] =
-        IsFixedMatrixBuild()
+        GetCompiledOutputDriver() == OutputDriver::HUB75
             ? GetCompiledMatrixWidth()
             : GetCompiledLEDCount();
     topology["compiledMaxHeight"] =
-        IsFixedMatrixBuild()
+        GetCompiledOutputDriver() == OutputDriver::HUB75
             ? GetCompiledMatrixHeight()
             : GetCompiledLEDCount();
     topology["compiledNominalWidth"] = GetCompiledMatrixWidth();

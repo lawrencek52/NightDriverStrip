@@ -16,7 +16,6 @@ private:
   uint8_t hue {0}, hue2 {0};   // gradual shift in hue or some other
                                // cyclic counter
   uint8_t deltaHue {0}, deltaHue2 {0};
-  bool horizontalPass {false};
 
 public:
 
@@ -83,31 +82,16 @@ public:
       // Calling SetNoise() in here will index past what was
       // FillGetNoised, which returns slowly scrolling bars
       // of black along X and Y axes.
-      g().FillGetNoiseEdges();
+      g().FillGetNoise();
       // g().SetNoise(1, 1, 1, 4, 4);
     }
 
-    if (WIDTH <= 64 && HEIGHT <= 32)
-    {
-      g().MoveFractionalNoiseX(1);
-      g().MoveFractionalNoiseY(1);
-      g().blurRows(g().leds, WIDTH, HEIGHT, 0, 10);
-      g().blurColumns(g().leds, WIDTH, HEIGHT, 1, 10);
-    }
-    else
-    {
-      // Alternate axes on large logical surfaces to keep scanout responsive.
-      horizontalPass = !horizontalPass;
-      if (horizontalPass)
-      {
-        g().MoveFractionalNoiseX(2);
-        g().blurRows(g().leds, WIDTH, HEIGHT, 0, 20);
-      }
-      else
-      {
-        g().MoveFractionalNoiseY(2);
-        g().blurColumns(g().leds, WIDTH, HEIGHT, 1, 20);
-      }
-    }
+    // Lower number for thicker, more static fog. Higher for more wisp.
+    // Smearing 1 was the minimal fix that cured the vertical bars.
+    g().MoveFractionalNoiseX(1);
+    g().MoveFractionalNoiseY(1);
+    // Without this, we get tornadoes where the diagonals cross as there's
+    // an excess of set pixels there.
+    g().BlurFrame(10);
   }
 };

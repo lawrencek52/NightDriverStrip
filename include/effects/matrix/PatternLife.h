@@ -270,17 +270,12 @@ public:
         // We have to first extract the alive bits alone because we don't want the hue and brightness
         // data to mess with the CRC.
 
-        // Feed the CRC one short row at a time. A full MATRIX_WIDTH by
-        // MATRIX_HEIGHT temporary here overflowed the renderer task stack on
-        // larger matrices (14.4 KB at 160x90).
-        std::array<uint8_t, MATRIX_HEIGHT> aliveRow;
-        uint32_t crc = 0xffffffff;
-        for (int i = 0; i < MATRIX_WIDTH; ++i)
-        {
-            for (int j = 0; j < MATRIX_HEIGHT; ++j)
-                aliveRow[j] = world[i][j].alive;
-            crc = uzlib_crc32(aliveRow.data(), aliveRow.size(), crc);
-        }
+        bool alive[MATRIX_WIDTH][MATRIX_HEIGHT];
+        for (int i = 0; i < MATRIX_WIDTH; i++)
+            for (int j = 0; j < MATRIX_HEIGHT; j++)
+                alive[i][j] = world[i][j].alive;
+
+        auto crc = uzlib_crc32(alive, sizeof(alive), 0xffffffff);
         for (int i = 0; i < CRC_LENGTH - 1; i++)
             checksums[i] = checksums[i+1];
         checksums[CRC_LENGTH - 1] = crc;

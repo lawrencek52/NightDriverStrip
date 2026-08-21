@@ -74,8 +74,10 @@ void EffectManager::StartEffect()
 
     auto effect = _tempEffect ? _tempEffect : _vEffects[_iCurrentEffect];
 
-    if (!_gfx.empty())
-        _gfx[0]->SetCaption(effect->FriendlyName(), CAPTION_TIME);
+    #if USE_HUB75
+        auto& matrix = static_cast<HUB75GFX&>(*_gfx[0]);
+        matrix.SetCaption(effect->FriendlyName(), CAPTION_TIME);
+    #endif
 
     // Zero the whites plane on every graphics device at effect-switch.
     //
@@ -99,7 +101,28 @@ void EffectManager::StartEffect()
                    device->GetLEDCount() * sizeof(CRGBW));
     }
 
-    effect->Start();
+    // With independent channels there is no single effect to start: each channel
+    // owns its own instance, so start those instead. A temp effect still wins,
+    // since a remote global color is meant to take over the whole device.
+
+    if (_channelsIndependent && !_tempEffect)
+    {
+        const auto now = millis();
+
+        for (auto& channel : _channels)
+        {
+            if (channel.effect)
+            {
+                channel.effect->Start();
+                channel.nextDrawMs = now;
+            }
+        }
+    }
+    else
+    {
+        effect->Start();
+    }
+
     _lastBeatSequence = g_Analyzer.LastBeat().sequence;
     _lastNearBeatSequence = g_Analyzer.LastNearBeat().sequence;
     _effectStartTime = millis();
@@ -115,19 +138,34 @@ void EffectManager::DispatchBeatIfNeeded()
     if (!_tempEffect && _vEffects.empty())
         return;
 
-    auto& currentEffect = GetCurrentEffect();
+    // Dispatch to whatever is actually drawing: one shared effect, or every
+    // channel's own instance. Missing this in per-channel mode would leave
+    // audio-reactive effects on all but the first strip without beats.
+
+    const auto forEachActiveEffect = [this](auto&& action)
+    {
+        if (_tempEffect || !_channelsIndependent)
+        {
+            action(GetCurrentEffect());
+            return;
+        }
+
+        for (auto& channel : _channels)
+            if (channel.effect)
+                action(*channel.effect);
+    };
 
     const auto nearBeat = g_Analyzer.LastNearBeat();
     if (nearBeat.sequence != 0 && nearBeat.sequence != _lastNearBeatSequence)
     {
-        currentEffect.OnNearBeat(nearBeat);
+        forEachActiveEffect([&](LEDStripEffect& effect) { effect.OnNearBeat(nearBeat); });
         _lastNearBeatSequence = nearBeat.sequence;
     }
 
     const auto beat = g_Analyzer.LastBeat();
     if (beat.sequence != 0 && beat.sequence != _lastBeatSequence)
     {
-        currentEffect.OnBeat(beat);
+        forEachActiveEffect([&](LEDStripEffect& effect) { effect.OnBeat(beat); });
         _lastBeatSequence = beat.sequence;
     }
 #endif
@@ -176,6 +214,24 @@ bool EffectManager::ReinitializeEffects()
         {
             debugW("Could not re-initialize temporary effect: %s\n", _tempEffect->FriendlyName().c_str());
             return false;
+        }
+    }
+
+    // A topology change can hand us a rebuilt device vector and new LED counts, so
+    // rebind the channel views and re-init the clones against them. If any clone
+    // fails to rebuild we fall back to shared mode rather than run a channel whose
+    // effect is still sized for the old topology.
+
+    BindChannelGraphics();
+
+    for (auto& channel : _channels)
+    {
+        if (channel.effect && !channel.effect->Init(channel.gfx))
+        {
+            debugW("Could not re-initialize per-channel effect %s; falling back to shared mode",
+                   channel.effect->FriendlyName().c_str());
+            LeaveIndependentMode();
+            break;
         }
     }
 
@@ -270,6 +326,13 @@ void EffectManager::construct(bool clearTempEffect)
 {
     _bPlayAll = false;
 
+    BindChannelGraphics();
+
+    // Channels start out following the shared current effect. A per-channel pin,
+    // or a persisted selection restored by DeserializeFromJSON(), moves them off it.
+    for (auto& channel : _channels)
+        channel.index = _iCurrentEffect;
+
     if (clearTempEffect && _tempEffect)
     {
         _clearTempEffectWhenExpired = true;
@@ -284,6 +347,208 @@ void EffectManager::construct(bool clearTempEffect)
 
         _iCurrentEffect--;
     }
+}
+
+//
+// Per-channel playback plumbing
+//
+
+void EffectManager::BindChannelGraphics()
+{
+    for (size_t i = 0; i < _channels.size(); i++)
+    {
+        auto& gfx = _channels[i].gfx;
+        gfx.clear();
+
+        // One device per channel. Builds where the device vector is shorter than
+        // NUM_CHANNELS shouldn't happen (InitializeHardware allocates one device
+        // per channel), but falling back to device 0 keeps us off a null deref.
+        if (i < _gfx.size())
+            gfx.push_back(_gfx[i]);
+        else if (!_gfx.empty())
+            gfx.push_back(_gfx[0]);
+    }
+}
+
+void EffectManager::ClearChannelWhites(const ChannelPlayback& channel)
+{
+    if (channel.gfx.empty())
+        return;
+
+    const auto& device = channel.gfx[0];
+    if (device && device->whites)
+        memset(device->whites, 0, device->GetLEDCount() * sizeof(CRGBW));
+}
+
+uint EffectManager::EffectiveFrameRate(const ChannelPlayback& channel)
+{
+    if (channel.fpsOverride > 0)
+        return channel.fpsOverride;
+
+    return channel.effect ? channel.effect->DesiredFramesPerSecond() : 0;
+}
+
+std::shared_ptr<LEDStripEffect> EffectManager::MakeChannelEffect(size_t channel, size_t index)
+{
+    if (channel >= _channels.size() || index >= _vEffects.size() || _channels[channel].gfx.empty())
+        return nullptr;
+
+    auto& source = _vEffects[index];
+
+    // Clone through JSON, the same way CopyEffect() does, so the channel's copy
+    // inherits whatever settings the user has edited on the list entry. The JSON
+    // factory map outlives startup - only the default factories are released -
+    // so this is safe to call at any time.
+
+    const auto& jsonEffectFactories = g_ptrEffectFactories->GetJSONFactories();
+    auto factoryEntry = jsonEffectFactories.find(source->effectId());
+
+    if (factoryEntry == jsonEffectFactories.end())
+    {
+        debugW("No JSON factory for effect %s, so it can't be bound to one channel", source->FriendlyName().c_str());
+        return nullptr;
+    }
+
+    auto jsonDoc = CreateJsonDocument();
+    auto jsonObject = jsonDoc.to<JsonObject>();
+
+    if (!source->SerializeToJSON(jsonObject))
+    {
+        debugE("Could not serialize effect %s to JSON", source->FriendlyName().c_str());
+        return nullptr;
+    }
+
+    auto effect = factoryEntry->second(jsonDoc.as<JsonObjectConst>());
+
+    // Init() with the channel's one-element gfx vector is the whole trick: every
+    // LEDStripEffect drawing helper works off _GFX, so a single-device _GFX means
+    // "draw to this strip only" with no changes needed in the effect itself.
+
+    if (!effect || !effect->Init(_channels[channel].gfx))
+    {
+        debugW("Could not initialize channel %zu instance of effect %s", channel, source->FriendlyName().c_str());
+        return nullptr;
+    }
+
+    effect->SetEnabled(source->IsEnabled());
+    effect->Start();
+
+    return effect;
+}
+
+bool EffectManager::EnterIndependentMode()
+{
+    if (_vEffects.empty())
+        return false;
+
+    // Build every clone before committing any of them, so one un-clonable effect
+    // leaves the device in shared mode rather than half-converted with dark strips.
+
+    std::array<std::shared_ptr<LEDStripEffect>, NUM_CHANNELS> effects;
+
+    for (size_t i = 0; i < _channels.size(); i++)
+    {
+        if (_channels[i].index >= _vEffects.size())
+            _channels[i].index = _iCurrentEffect;
+
+        effects[i] = MakeChannelEffect(i, _channels[i].index);
+        if (!effects[i])
+            return false;
+    }
+
+    const auto now = millis();
+
+    for (size_t i = 0; i < _channels.size(); i++)
+    {
+        _channels[i].effect = std::move(effects[i]);
+        _channels[i].nextDrawMs = now;
+        ClearChannelWhites(_channels[i]);
+    }
+
+    _channelsIndependent = true;
+    debugI("Switched to per-channel effects");
+
+    return true;
+}
+
+void EffectManager::LeaveIndependentMode()
+{
+    if (!_channelsIndependent)
+        return;
+
+    for (auto& channel : _channels)
+        channel.effect.reset();
+
+    _channelsIndependent = false;
+    debugI("Returned to a single effect on all channels");
+}
+
+void EffectManager::ResumeSharedPlayback()
+{
+    if (!_channelsIndependent)
+        return;
+
+    LeaveIndependentMode();
+
+    // The persisted "cci" array is only written while the channels are
+    // independent, so this write is what actually clears it.
+    SaveEffectManagerConfig();
+}
+
+bool EffectManager::DrawChannel(ChannelPlayback& channel)
+{
+    if (!channel.effect)
+        return false;
+
+    const uint fps = EffectiveFrameRate(channel);
+    const auto now = millis();
+
+    // An fps of 0 means "as fast as the loop runs", so there's nothing to gate.
+    if (fps > 0)
+    {
+        const uint32_t interval = std::max<uint32_t>(1, MILLIS_PER_SECOND / fps);
+
+        // Signed difference so the comparison survives the millis() rollover.
+        if (static_cast<int32_t>(now - channel.nextDrawMs) < 0)
+            return false;
+
+        // Advance the deadline by exactly one interval rather than resetting it to
+        // now. The draw loop wakes on the *fastest* channel's period, so a reset
+        // would let loop jitter push the channel whose interval equals that period
+        // onto every other frame, halving its rate. Resync when we've fallen a full
+        // interval behind (effect switch, OTA stall, a slow neighbouring channel).
+
+        channel.nextDrawMs += interval;
+        if (static_cast<int32_t>(now - channel.nextDrawMs) > static_cast<int32_t>(interval))
+            channel.nextDrawMs = now + interval;
+    }
+
+    channel.effect->Draw();
+    return true;
+}
+
+bool EffectManager::RemapIndexForMove(size_t& index, size_t from, size_t to)
+{
+    if (index == from)
+        index = to;
+    else if (from < index && to >= index)
+        index--;
+    else if (from > index && to <= index)
+        index++;
+    else
+        return false;
+
+    return true;
+}
+
+void EffectManager::RemapIndexForDelete(size_t& index, size_t deleted, size_t newCount)
+{
+    if (newCount == 0)
+        index = 0;
+    else if (index > deleted)
+        index--;
+    else if (index >= newCount)
+        index = newCount - 1;
 }
 
 void EffectManager::EnableEffect(size_t i, bool skipSave)
@@ -364,21 +629,13 @@ void EffectManager::MoveEffect(size_t from, size_t to)
     else // from > to
         std::rotate(_vEffects.rend() - from - 1, _vEffects.rend() - from, _vEffects.rend() - to);
 
-    if (from == _iCurrentEffect)
-    {
-        _iCurrentEffect = to;
+    if (RemapIndexForMove(_iCurrentEffect, from, to))
         SaveCurrentEffectIndex();
-    }
-    else if (from < _iCurrentEffect && to >= _iCurrentEffect)
-    {
-        _iCurrentEffect--;
-        SaveCurrentEffectIndex();
-    }
-    else if (from > _iCurrentEffect && to <= _iCurrentEffect)
-    {
-        _iCurrentEffect++;
-        SaveCurrentEffectIndex();
-    }
+
+    // The per-channel pins are indices into the same list, so they need the same
+    // fix-up or a reorder would silently repoint a strip at a different effect.
+    for (auto& channel : _channels)
+        RemapIndexForMove(channel.index, from, to);
 
     SaveEffectManagerConfig();
 
@@ -482,6 +739,25 @@ bool EffectManager::DeleteEffect(size_t index)
             _iCurrentEffect = _vEffects.size() - 1;
     }
 
+    // Repoint any channel pinned at or past the deleted entry. A channel that was
+    // playing the deleted effect needs a rebuilt clone, since its instance is a
+    // copy of a list entry that no longer exists.
+
+    for (size_t i = 0; i < _channels.size(); i++)
+    {
+        auto& channel = _channels[i];
+        const bool wasPlayingDeleted = channel.index == index;
+
+        RemapIndexForDelete(channel.index, index, _vEffects.size());
+
+        if (_channelsIndependent && wasPlayingDeleted)
+        {
+            auto effect = MakeChannelEffect(i, channel.index);
+            if (effect)
+                channel.effect = std::move(effect);
+        }
+    }
+
     SaveCurrentEffectIndex();
     SaveEffectManagerConfig();
 
@@ -498,6 +774,13 @@ void EffectManager::CheckEffectTimerExpired()
     std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
 
     if (!_tempEffect && _vEffects.empty())
+        return;
+
+    // Pinning effects per channel turns auto-rotation off: the point of setting
+    // strip 2 to Fire is that it stays on Fire. Selecting an effect for all
+    // channels (POST /currentEffect with no channel) resumes rotation.
+
+    if (_channelsIndependent && !_tempEffect)
         return;
 
     if (IsIntervalEternal() && !GetCurrentEffect().HasMaximumEffectTime())
@@ -522,6 +805,14 @@ void EffectManager::CheckEffectTimerExpired()
 void EffectManager::NextEffect(bool skipSave)
 {
     std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
+
+    // "Advance the effect" is a device-wide request, and rotation is off while the
+    // channels are pinned, so honoring it means dropping back to shared playback -
+    // otherwise the button would appear to do nothing. skipSave marks the internal
+    // call from DeleteEffect(), which must leave the per-channel pins alone.
+
+    if (!skipSave)
+        ResumeSharedPlayback();
 
     if (_vEffects.empty())
     {
@@ -554,6 +845,8 @@ void EffectManager::NextEffect(bool skipSave)
 void EffectManager::PreviousEffect()
 {
     std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
+
+    ResumeSharedPlayback();     // See NextEffect() for why
 
     if (_vEffects.empty())
     {
@@ -602,8 +895,14 @@ void EffectManager::Update()
     CheckEffectTimerExpired();
     DispatchBeatIfNeeded();
 
+    // A temp effect (remote global color) deliberately owns every strip, so it
+    // short-circuits per-channel playback.
+
     if (_tempEffect)
         _tempEffect->Draw();
+    else if (_channelsIndependent)
+        for (auto& channel : _channels)
+            DrawChannel(channel);
     else
         _vEffects[_iCurrentEffect]->Draw();
 
@@ -613,6 +912,16 @@ void EffectManager::Update()
 void EffectManager::ApplyFadeLogic()
 {
     if (EffectCount() < 2)
+    {
+        g_Values.Fader = 255;
+        return;
+    }
+
+    // The fader is one global value applied to every channel by the output
+    // manager, and pinned channels don't rotate, so there's no transition to
+    // fade through: hold it wide open.
+
+    if (_channelsIndependent && !_tempEffect)
     {
         g_Values.Fader = 255;
         return;

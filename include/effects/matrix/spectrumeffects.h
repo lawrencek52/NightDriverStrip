@@ -300,7 +300,10 @@ public:
 
     virtual void Draw() override
     {
-        DrawVUMeter(g_ptrSystem->GetEffectManager().GetBaseGraphics(), 0);
+        // Draw through _GFX, not the EffectManager's full device list: _GFX is the
+        // set of channels this instance was bound to, which is how per-channel
+        // playback confines an effect to one strip. Every other effect does the same.
+        DrawVUMeter(_GFX, 0);
     }
 
     VUMeterEffect() : EffectWithId<VUMeterEffect>("VUMeter") {}
@@ -319,7 +322,7 @@ public:
 
     virtual void Draw() override
     {
-        DrawVUMeter(g_ptrSystem->GetEffectManager().GetBaseGraphics(), 0);
+        DrawVUMeter(_GFX, 0);       // See VUMeterEffect::Draw() for why this is _GFX
     }
 
     VUMeterVerticalEffect() : EffectWithId<VUMeterVerticalEffect>("Vertical VUMeter") {}
@@ -856,12 +859,8 @@ class SpectrumBarEffect : public EffectWithId<SpectrumBarEffect>, public BeatEff
             auto value =  g_Analyzer.BeatEnhance(SPECTRUMBARBEAT_ENHANCE) * g_Analyzer.Peak2Decay(iBand);
             auto top    = std::max(0.0f, halfHeight - value * halfHeight);
             auto bottom = std::min(MATRIX_HEIGHT-1.0f, halfHeight + value * halfHeight + 1);
-            const size_t radialOffset =
-                ((static_cast<size_t>(iBand) * halfWidth) / NUM_BANDS + offset) %
-                halfWidth;
-            const int x1 = static_cast<int>(halfWidth) -
-                           static_cast<int>(radialOffset);
-            const int x2 = static_cast<int>(halfWidth + radialOffset);
+            auto x1     = halfWidth - ((iBand * 2 + offset) % halfWidth);
+            auto x2     = halfWidth + ((iBand * 2 + offset) % halfWidth);
 
             if (value == 0.0f)
                 bottom = top;

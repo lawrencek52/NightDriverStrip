@@ -27,18 +27,6 @@ void IdleTask::ProcessIdleTime()
     _lastMeasurement = millis();
     counter = 0;
 
-    // Register from inside the task itself. Registering the task handles in
-    // TaskManager::begin() races with these tasks starting, and ESP-IDF 5.5
-    // reports every early reset attempt as "task not found".
-    #if M5TAB
-        // ESP32-P4's system idle-task watchdog subscriptions are managed
-        // explicitly in TaskManager::begin(). Do not subscribe these
-        // replacement CPU-meter tasks as additional watchdog clients.
-        constexpr bool watchdogRegistered = false;
-    #else
-        const bool watchdogRegistered = (esp_task_wdt_add(nullptr) == ESP_OK);
-    #endif
-
     // We need to whack the watchdog so we delay in smaller bites until we've used up all the time
 
     while (true)
@@ -54,8 +42,7 @@ void IdleTask::ProcessIdleTime()
         else
         {
             // Burn a little time and update the counter
-            if (watchdogRegistered)
-                esp_task_wdt_reset();
+            esp_task_wdt_reset();
             delayMicroseconds(kMillisPerLoop*1000);
             counter += kMillisPerLoop;
         }
@@ -86,26 +73,15 @@ void TaskManager::begin()
     // to see how much there is (it's how they measure free CPU).  Thus, we starve the system's normal idle tasks
     // and have to feed the watchdog on our own.
 
-#if M5TAB
-    // The P4 Arduino core can leave one system idle task unsubscribable via
-    // esp_task_wdt_delete(), while our replacement idle task then becomes a
-    // stale watchdog client. Reconfigure the intended policy atomically:
-    // no idle-task clients, while preserving the watchdog for tasks/users
-    // that explicitly subscribe themselves.
-    const esp_task_wdt_config_t watchdogConfig = {
-        .timeout_ms = CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000U,
-        .idle_core_mask = 0,
-        .trigger_panic = true,
-    };
-    if (esp_task_wdt_reconfigure(&watchdogConfig) != ESP_OK)
-        debugW("Unable to reconfigure Tab5 task watchdog");
-#elif ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(0));
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(1));
 #else
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1));
 #endif
+    esp_task_wdt_add(_hIdle0);
+    esp_task_wdt_add(_hIdle1);
 }
 
 void TaskManager::CheckHeap()

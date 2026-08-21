@@ -26,36 +26,29 @@
 #
 #    This script builds all the environment names defined in platformio.ini.
 #
-#    The script can be executed from any working directory.
+#    Note that it expects to be executed from the project root directory. That is,
+#    it needs to be run like this:
+#
+#    $ tools/build_all.py
+#
+#    Instead of:
+#
+#    $ cd tools
+#    $ ./build_all.py
 #
 # History:     Aug-27-2023         Rbergen      Created
 #
 #---------------------------------------------------------------------------
 
+import show_envs
 import subprocess
-
-
-if __package__:
-    from . import show_envs
-else:
-    import show_envs
-
 
 def buildenvs():
     errors = []
-    envs = show_envs.getenvs()
 
-    if not envs:
-        return ['No PlatformIO environments were found in ' + str(show_envs.PLATFORMIO_INI)]
-
-    for index, env in enumerate(envs, start=1):
-        print(f'[{index}/{len(envs)}] Building {env}...', flush=True)
+    for env in show_envs.getenvs():
         try:
-            subprocess.run(
-                ['pio', 'run', '-e', env],
-                check=True,
-                cwd=show_envs.PROJECT_ROOT,
-            )
+            subprocess.run(['pio', 'run', '-e', env], check=True)
         except subprocess.CalledProcessError as cpe:
             errors.append('Process \'' + ' '.join(cpe.cmd) + '\' completed with error code ' + str(cpe.returncode))
 

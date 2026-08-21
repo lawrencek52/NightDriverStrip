@@ -233,6 +233,36 @@ bool EffectManager::DeserializeFromJSON(const JsonObjectConst& jsonObject)
 
     construct(true);
 
+    // "cci" holds the per-channel effect indices and "cfp" the per-channel frame
+    // rate overrides. Both are absent in configs written before per-channel
+    // playback existed, in which case construct() has already pointed every
+    // channel at the shared current effect - which is exactly the old behavior.
+
+    JsonArrayConst channelIndices = jsonObject["cci"].as<JsonArrayConst>();
+
+    if (!channelIndices.isNull())
+    {
+        for (size_t i = 0; i < _channels.size() && i < channelIndices.size(); i++)
+        {
+            const size_t index = channelIndices[i].as<size_t>();
+            if (index < _vEffects.size())
+                _channels[i].index = index;
+        }
+    }
+
+    JsonArrayConst channelRates = jsonObject["cfp"].as<JsonArrayConst>();
+
+    if (!channelRates.isNull())
+        for (size_t i = 0; i < _channels.size() && i < channelRates.size(); i++)
+            _channels[i].fpsOverride = channelRates[i].as<uint>();
+
+    // The presence of "cci" is what says the channels were independent when this
+    // config was written - not whether the indices happen to differ, since pinning
+    // every strip to the same effect is a legitimate thing to have done.
+
+    if (!channelIndices.isNull() && !EnterIndependentMode())
+        debugW("Could not restore per-channel effects; falling back to a single effect");
+
     return true;
 }
 
@@ -261,6 +291,25 @@ bool EffectManager::SerializeToJSON(JsonObject& jsonObject)
     jsonObject["ivl"] = _effectInterval;
     jsonObject[PTY_PROJECT] = PROJECT_NAME;
     jsonObject[PTY_EFFECTSETVER] = _effectSetHashString;
+
+    // Per-channel effect selection ("cci") and frame rate overrides ("cfp"). "cci"
+    // is only written while the channels are actually independent, so a device that
+    // has never used the feature keeps producing config a pre-per-channel build
+    // can read, and a round-trip can't accidentally pin the channels.
+
+    if (_channelsIndependent)
+    {
+        JsonArray channelIndices = jsonObject["cci"].to<JsonArray>();
+        for (const auto& channel : _channels)
+            channelIndices.add(channel.index);
+    }
+
+    if (std::any_of(_channels.begin(), _channels.end(), [](const auto& channel) { return channel.fpsOverride > 0; }))
+    {
+        JsonArray channelRates = jsonObject["cfp"].to<JsonArray>();
+        for (const auto& channel : _channels)
+            channelRates.add(channel.fpsOverride);
+    }
 
     // Next, the function creates a nested array ("efs") in the JSON object to store the effects themselves.
     JsonArray effectsArray = jsonObject["efs"].to<JsonArray>();

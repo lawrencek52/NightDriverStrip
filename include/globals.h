@@ -122,15 +122,10 @@ extern std::recursive_mutex g_effect_manager_mutex;
 
 #define FLASH_VERSION          40   // Update ONLY this to increment the version number
 
-// Output transport selection: exactly one of USE_HUB75 / USE_M5LCD /
-// USE_WS281X / USE_APA102.
+// Output transport selection: exactly one of USE_HUB75 / USE_WS281X / USE_APA102.
 // USE_STRIP is derived from the two strip transports.
 #ifndef USE_HUB75
     #define USE_HUB75 0
-#endif
-
-#ifndef USE_M5LCD
-    #define USE_M5LCD 0
 #endif
 
 #ifndef USE_APA102
@@ -139,8 +134,8 @@ extern std::recursive_mutex g_effect_manager_mutex;
 
 #ifndef USE_WS281X
     // Strip projects historically defaulted to WS281x whenever the build
-    // wasn't a dedicated matrix transport or APA102. Preserve that default.
-    #if !USE_HUB75 && !USE_M5LCD && !USE_APA102
+    // wasn't HUB75 or APA102. Preserve that default.
+    #if !USE_HUB75 && !USE_APA102
         #define USE_WS281X 1
     #else
         #define USE_WS281X 0
@@ -149,8 +144,8 @@ extern std::recursive_mutex g_effect_manager_mutex;
 
 #define USE_STRIP (USE_WS281X || USE_APA102)
 
-#if (USE_HUB75 + USE_M5LCD + USE_WS281X + USE_APA102) != 1
-    #error "Define exactly one output transport: USE_HUB75, USE_M5LCD, USE_WS281X, or USE_APA102"
+#if (USE_HUB75 + USE_WS281X + USE_APA102) != 1
+    #error "Define exactly one output transport: USE_HUB75, USE_WS281X, or USE_APA102"
 #endif
 
 #define XSTR(x) ND_STR(x)           // The defs will generate the stringized version of it
@@ -186,7 +181,7 @@ extern std::recursive_mutex g_effect_manager_mutex;
     #define USE_M5 1
 #endif
 
-#if USE_HUB75 || USE_M5LCD
+#if USE_HUB75
     #ifndef USE_MATRIX
         #define USE_MATRIX 1
     #endif
@@ -757,10 +752,6 @@ extern const int g_aRingSizeTable[];
 #define M5STACKCORE2 0
 #endif
 
-#ifndef M5TAB
-#define M5TAB 0
-#endif
-
 #ifndef COLORDATA_SERVER_ENABLED
   #if ENABLE_WIFI
     #define COLORDATA_SERVER_ENABLED 1
@@ -797,6 +788,8 @@ extern const int g_aRingSizeTable[];
             #define AUDIO_INPUT_PIN (36)
         #elif ELECROW
             #define AUDIO_INPUT_PIN (41)
+        #elif USE_PDM_AUDIO
+            #define AUDIO_INPUT_PIN (41)    // PDM data; XIAO ESP32-S3 Sense onboard mic
         #elif USE_M5
             #define AUDIO_INPUT_PIN (34)
             #define IO_PIN (0)
@@ -828,6 +821,27 @@ extern const int g_aRingSizeTable[];
 
   #ifndef I2S_DATA_PIN
     #define I2S_DATA_PIN     AUDIO_INPUT_PIN
+  #endif
+#endif
+
+// PDM microphones (XIAO ESP32-S3 Sense, etc.) need only a clock out and a data
+// in - there is no bit clock or word select, so AUDIO_INPUT_PIN plus the clock
+// below fully describe the wiring.
+#if USE_PDM_AUDIO
+  #ifndef PDM_CLK_PIN
+    #define PDM_CLK_PIN    42               // XIAO ESP32-S3 Sense onboard mic clock
+  #endif
+
+  // PDM mics are quiet in absolute terms - the Sense's MSM261 is spec'd at
+  // -26 dBFS for 94 dB SPL, so music at normal listening levels sits near the
+  // bottom of the 16-bit range and never lifts the noise floor far enough to
+  // clear the analyzer's quiet-frame gate. This fixed digital gain is applied
+  // to the samples as they arrive, so the gate, the VU and beat detection all
+  // see levels comparable to a line-level or M5 mic. Band power scales with the
+  // square of this, so 8 buys 64x. Raise it for a quiet room, lower it if loud
+  // passages sit pinned at full scale.
+  #ifndef PDM_GAIN
+    #define PDM_GAIN       8
   #endif
 #endif
 

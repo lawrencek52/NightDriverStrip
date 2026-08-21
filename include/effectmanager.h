@@ -39,6 +39,7 @@
 #include "jsonserializer.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -129,8 +130,78 @@ class  EffectManager : public IJSONSerializable
     std::vector<std::reference_wrapper<IEffectEventListener>> _effectEventListeners;
     mutable std::mutex _listenerMutex;
 
+    // ChannelPlayback
+    //
+    // Per-output-channel playback state, used when the channels run independent
+    // effects. _vEffects remains the single canonical effect list - the one the
+    // UI edits and that gets persisted - and each channel plays a private clone
+    // of the entry it is pinned to.
+    //
+    // The clone is Init()ed with a one-element gfx vector, and that is what
+    // confines it to a single strip: every drawing helper in LEDStripEffect works
+    // off _GFX, so a one-device _GFX means "draw to this strip only" without any
+    // effect-side changes. Cloning (rather than sharing the list instance) is also
+    // what keeps animation state - fire heat maps, particle systems, phase
+    // accumulators - from colliding when two channels play the same effect.
+
+    struct ChannelPlayback
+    {
+        std::shared_ptr<LEDStripEffect>       effect;                 // channel-private clone
+        std::vector<std::shared_ptr<GFXBase>> gfx;                    // exactly one device
+        size_t                                index       = 0;        // into _vEffects
+        uint                                  fpsOverride = 0;        // 0 = follow the effect's DesiredFramesPerSecond()
+        uint32_t                              nextDrawMs  = 0;        // millis() deadline for this channel's next frame
+    };
+
+    std::array<ChannelPlayback, NUM_CHANNELS> _channels;
+
+    // False means every channel draws from one shared effect instance, which is
+    // the original and default behavior: rotation and cross-fade both run. Pinning
+    // any single channel flips this true, after which each channel is drawn from
+    // its own clone at its own frame rate and the rotation timer stops - a pinned
+    // strip is meant to stay put until it is changed again.
+
+    bool _channelsIndependent = false;
+
     void construct(bool clearTempEffect);
     void DispatchBeatIfNeeded();
+
+    // Gives every ChannelPlayback the one-element gfx vector it hands to Init().
+    // Must be re-run whenever the device vector is rebuilt (live topology change).
+    void BindChannelGraphics();
+
+    // Builds a channel-private instance of _vEffects[index] bound to one strip.
+    // Returns nullptr if the effect has no JSON factory or fails to initialize.
+    std::shared_ptr<LEDStripEffect> MakeChannelEffect(size_t channel, size_t index);
+
+    // Materializes clones for every channel and switches to independent mode.
+    // Rolls back to shared mode and returns false if any clone can't be built.
+    bool EnterIndependentMode();
+
+    // Drops the per-channel clones and returns to one shared effect on all strips.
+    void LeaveIndependentMode();
+
+    // LeaveIndependentMode() plus a config write, so a reboot doesn't restore the
+    // per-channel pins we just discarded. No-op when already in shared mode.
+    void ResumeSharedPlayback();
+
+    // Draws one channel if its own frame interval has elapsed. Returns true if it drew.
+    bool DrawChannel(ChannelPlayback& channel);
+
+    // Rate a channel should draw at: its override if set, else its effect's ask.
+    static uint EffectiveFrameRate(const ChannelPlayback& channel);
+
+    // Zeroes one channel's whites plane; see StartEffect() for why that's needed
+    // at every effect switch.
+    static void ClearChannelWhites(const ChannelPlayback& channel);
+
+    // MoveEffect rotates the effect list, so any stored index into it needs the
+    // same fix-up. Shared by the per-channel pinned indices so they can't drift
+    // away from _iCurrentEffect. Returns true if the index moved.
+    static bool RemapIndexForMove(size_t& index, size_t from, size_t to);
+
+    // Adjusts a stored index after the entry at `deleted` was erased from the list.
+    static void RemapIndexForDelete(size_t& index, size_t deleted, size_t newCount);
 
     // Implementation is in effects.cpp
     void LoadJSONEffects(const JsonArrayConst& effectsArray);
@@ -274,6 +345,35 @@ public:
     LEDStripEffect& GetCurrentEffect() const;
     String GetCurrentEffectName() const;
     void SetCurrentEffectIndex(size_t i);
+
+    // Per-channel effect selection
+    //
+    // kAllChannels targets every strip and returns the device to shared mode -
+    // one effect instance on all channels, with rotation and cross-fade active.
+    // That's what /currentEffect does when the request carries no channel, so the
+    // pre-per-channel API contract is preserved exactly.
+
+    static constexpr int kAllChannels = -1;
+    static constexpr size_t ChannelCount() { return NUM_CHANNELS; }
+
+    // Pins one channel (or all of them) to an effect. Returns false if the channel
+    // or effect index is out of range, or if the per-channel clone couldn't be built.
+    bool SetEffectIndex(int channel, size_t effectIndex);
+
+    size_t GetChannelEffectIndex(size_t channel) const;
+    bool AreChannelsIndependent() const;
+
+    // Per-channel frame rate. Passing 0 hands the channel back to its effect's
+    // DesiredFramesPerSecond(); GetChannelFrameRate() reports the effective rate
+    // and GetChannelFrameRateOverride() the configured one (0 when unset).
+    bool SetChannelFrameRate(int channel, uint fps);
+    uint GetChannelFrameRate(size_t channel) const;
+    uint GetChannelFrameRateOverride(size_t channel) const;
+
+    // Rate the draw loop should pace itself at: the fastest of the active channels,
+    // so a slow effect on one strip can't throttle a fast one on another. Each
+    // channel is then gated to its own rate inside Update().
+    size_t GetDesiredFramesPerSecond() const;
     uint GetTimeUsedByCurrentEffect() const;
     uint GetTimeRemainingForCurrentEffect() const;
     uint GetEffectiveInterval() const;

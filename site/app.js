@@ -137,7 +137,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       "summaryCurrentEffect", "summaryEffectStatus", "summaryInterval", "summaryIntervalRemaining",
       "summaryTopology", "summaryDriver", "summaryLedFps", "summaryAudioFps", "summaryCpu",
       "summaryCpuCores", "summaryHeap", "summaryPsram",
-      "effectsMeta", "effectsTableBody", "reloadSettingsButton", "applySettingsButton",
+      "effectsMeta", "effectsTableBody", "channelStrip", "reloadSettingsButton", "applySettingsButton",
       "applySettingsRebootButton", "deviceSettingsForm", "statsTimestamp", "statsGrid",
       "previewConnectButton", "previewDisconnectButton", "previewStatus", "previewWrap", "previewCanvas",
       "tabEffectsButton", "tabSettingsButton", "tabStatisticsButton",
@@ -413,12 +413,22 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     const currentIndex = Number(effects.currentEffect || 0);
     const currentEffect = effectList[currentIndex];
     const intervalMs = Number(effects.effectInterval || 0);
-    const pinned = !!effects.eternalInterval || intervalMs === 0;
+    // Per-channel playback stops the rotation timer, so the interval and its
+    // countdown are as inert as they are with an eternal interval configured.
+    const pinned = !!effects.eternalInterval || intervalMs === 0 || !!effects.channelsIndependent;
     const remainingMs = Number(effects.millisecondsRemaining || 0);
     const intervalScale = getIntervalDisplayScale("effectInterval");
 
-    els.summaryCurrentEffect.textContent = currentEffect ? currentEffect.name : "--";
-    els.summaryEffectStatus.textContent = currentEffect ? (currentEffect.enabled ? "Enabled" : "Disabled") : "No effect";
+    // With the strips on different effects there is no single "current" one to
+    // report, so say so rather than naming whichever effect happens to be at
+    // the shared index.
+    if (effects.channelsIndependent && Array.isArray(effects.channelEffects)) {
+      els.summaryCurrentEffect.textContent = "Per-strip";
+      els.summaryEffectStatus.textContent = `${effects.channelEffects.length} strips, rotation off`;
+    } else {
+      els.summaryCurrentEffect.textContent = currentEffect ? currentEffect.name : "--";
+      els.summaryEffectStatus.textContent = currentEffect ? (currentEffect.enabled ? "Enabled" : "Disabled") : "No effect";
+    }
     els.summaryInterval.textContent = pinned
       ? (intervalScale.offLabel || "Off")
       : formatIntervalDisplay(intervalMs, intervalScale);
@@ -435,7 +445,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     els.summaryPsram.textContent = `PSRAM ${formatBytes(dynamicStats.PSRAM_FREE)}`;
 
     syncEffectIntervalInput(intervalMs);
-    els.effectsMeta.textContent = `${effectList.length} effects / active ${currentIndex}`;
+    els.effectsMeta.textContent = effects.channelsIndependent
+      ? `${effectList.length} effects / per-strip`
+      : `${effectList.length} effects / active ${currentIndex}`;
   }
 
   function syncEffectIntervalInput(serverIntervalMs) {
@@ -464,9 +476,20 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       return;
     }
 
+    // Per-channel playback. channelEffects is one effect index per output channel;
+    // when the channels aren't independent they all carry the shared current effect.
+    const channelEffects = Array.isArray(effects.channelEffects) ? effects.channelEffects.map(Number) : [];
+    const independent = !!effects.channelsIndependent;
+
     const rows = effects.Effects.map((effect, index) => {
       const tr = document.createElement("tr");
-      const isCurrent = index === Number(effects.currentEffect || 0);
+      const playingOn = channelEffects.reduce((strips, playing, channel) => {
+        if (playing === index) {
+          strips.push(channel + 1);
+        }
+        return strips;
+      }, []);
+      const isCurrent = independent ? playingOn.length > 0 : index === Number(effects.currentEffect || 0);
       tr.dataset.effectIndex = String(index);
 
       const gripCell = document.createElement("td");
@@ -504,7 +527,13 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
       const statusCell = document.createElement("td");
       statusCell.className = isCurrent ? "effect-active" : "effect-disabled";
-      statusCell.textContent = isCurrent ? "Active" : (effect.enabled ? "Queued" : "Disabled");
+      if (independent && isCurrent) {
+        statusCell.textContent = playingOn.length === channelEffects.length
+          ? "All strips"
+          : `Strip ${playingOn.join(", ")}`;
+      } else {
+        statusCell.textContent = isCurrent ? "Active" : (effect.enabled ? "Queued" : "Disabled");
+      }
       tr.appendChild(statusCell);
 
       const coreCell = document.createElement("td");
@@ -513,7 +542,22 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
       const actionsCell = document.createElement("td");
       actionsCell.className = "row-actions";
-      actionsCell.appendChild(miniIconButton("▶", "Trigger effect", () => postForm("/currentEffect", { currentEffectIndex: index }).then(loadEffectsOnly), !effect.enabled));
+      const allStripsTitle = channelEffects.length > 1 ? "Play on all strips (resumes rotation)" : "Trigger effect";
+      actionsCell.appendChild(miniIconButton("▶", allStripsTitle, () => postForm("/currentEffect", { currentEffectIndex: index }).then(loadEffectsOnly), !effect.enabled));
+
+      // One numbered button per output channel, so an effect can be pinned to a
+      // single strip. Pinning stops the rotation timer; "▶" above puts it back.
+      if (channelEffects.length > 1) {
+        channelEffects.forEach((playing, channel) => {
+          const button = miniIconButton(String(channel + 1), `Play on strip ${channel + 1} only`, () =>
+            postForm("/currentEffect", { currentEffectIndex: index, channel }).then(loadEffectsOnly), !effect.enabled);
+          if (playing === index) {
+            button.classList.add("channel-button-active");
+          }
+          actionsCell.appendChild(button);
+        });
+      }
+
       actionsCell.appendChild(miniIconButton("⚙", "Effect settings", () => openEffectDialog(index)));
       actionsCell.appendChild(miniIconButton("🗑", "Delete effect", () => deleteEffect(index), !!effect.core));
       tr.appendChild(actionsCell);
@@ -522,6 +566,78 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     });
 
     els.effectsTableBody.replaceChildren(...rows);
+    renderChannels();
+  }
+
+  // renderChannels
+  //
+  // One card per output channel showing what that strip is playing and its frame
+  // rate. Hidden entirely on single-channel builds, where there's nothing to pick
+  // between.
+
+  function renderChannels() {
+    if (!els.channelStrip) {
+      return;
+    }
+
+    const effects = state.effects;
+    const channelEffects = effects && Array.isArray(effects.channelEffects) ? effects.channelEffects : [];
+
+    if (channelEffects.length < 2) {
+      els.channelStrip.replaceChildren();
+      els.channelStrip.hidden = true;
+      return;
+    }
+
+    const effectList = Array.isArray(effects.Effects) ? effects.Effects : [];
+    const overrides = Array.isArray(effects.channelFrameRateOverrides) ? effects.channelFrameRateOverrides : [];
+    const effective = Array.isArray(effects.channelFrameRates) ? effects.channelFrameRates : [];
+
+    const cards = channelEffects.map((effectIndex, channel) => {
+      const card = document.createElement("div");
+      card.className = "channel-card";
+
+      const title = document.createElement("div");
+      title.className = "channel-title";
+      title.textContent = `Strip ${channel + 1}`;
+      card.appendChild(title);
+
+      const name = document.createElement("div");
+      name.className = "channel-effect";
+      const effect = effectList[Number(effectIndex)];
+      name.textContent = effect ? effect.name : "--";
+      card.appendChild(name);
+
+      const fpsLabel = document.createElement("label");
+      fpsLabel.className = "channel-fps";
+      fpsLabel.textContent = "FPS";
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.max = "1000";
+      input.step = "1";
+      input.id = `nd-channel-${channel}-fps`;
+      input.name = input.id;
+      input.title = "Frames per second for this strip. Blank follows the effect's own rate.";
+      // An override of 0 means "follow the effect", so leave the field blank and
+      // show the rate actually in force as the placeholder.
+      input.value = Number(overrides[channel] || 0) > 0 ? String(overrides[channel]) : "";
+      input.placeholder = String(effective[channel] || 0);
+      input.addEventListener("change", () => {
+        postForm("/channelFrameRate", { channel, fps: Number(input.value || 0) })
+          .then(loadEffectsOnly)
+          .catch((error) => handleError("Failed to set strip frame rate", error));
+      });
+
+      fpsLabel.appendChild(input);
+      card.appendChild(fpsLabel);
+
+      return card;
+    });
+
+    els.channelStrip.replaceChildren(...cards);
+    els.channelStrip.hidden = false;
   }
 
   function handleEffectDragStart(event, effectIndex, row) {

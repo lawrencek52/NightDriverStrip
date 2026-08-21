@@ -128,10 +128,6 @@ void HUB75GFX::MoveInwardX(int startY, int endY)
     const int halfWidth = MATRIX_WIDTH / 2;
     if (!leds || halfWidth <= 1)
         return;
-    constexpr int kReferenceMatrixWidth = 64;
-    const int scrollPixels = std::min(
-        halfWidth - 1,
-        std::max(1, (MATRIX_WIDTH + kReferenceMatrixWidth / 2) / kReferenceMatrixWidth));
 
     startY = std::max(0, startY);
     endY = std::min(MATRIX_HEIGHT - 1, endY);
@@ -139,12 +135,8 @@ void HUB75GFX::MoveInwardX(int startY, int endY)
     {
         auto pLine = leds + y * MATRIX_WIDTH;
         auto pLine2 = pLine + halfWidth;
-        const CRGB leftEdge = pLine[0];
-        const CRGB rightEdge = pLine[MATRIX_WIDTH - 1];
-        memmove(pLine + scrollPixels, pLine, sizeof(CRGB) * (halfWidth - scrollPixels));
-        memmove(pLine2, pLine2 + scrollPixels, sizeof(CRGB) * (halfWidth - scrollPixels));
-        std::fill_n(pLine, scrollPixels, leftEdge);
-        std::fill_n(pLine + MATRIX_WIDTH - scrollPixels, scrollPixels, rightEdge);
+        memmove(pLine + 1, pLine, sizeof(CRGB) * (halfWidth - 1));
+        memmove(pLine2, pLine2 + 1, sizeof(CRGB) * (halfWidth - 1));
     }
 }
 
@@ -153,10 +145,6 @@ void HUB75GFX::MoveOutwardsX(int startY, int endY)
     const int halfWidth = MATRIX_WIDTH / 2;
     if (!leds || halfWidth <= 1)
         return;
-    constexpr int kReferenceMatrixWidth = 64;
-    const int scrollPixels = std::min(
-        halfWidth - 1,
-        std::max(1, (MATRIX_WIDTH + kReferenceMatrixWidth / 2) / kReferenceMatrixWidth));
 
     startY = std::max(0, startY);
     endY = std::min(MATRIX_HEIGHT - 1, endY);
@@ -164,12 +152,8 @@ void HUB75GFX::MoveOutwardsX(int startY, int endY)
     {
         auto pLine = leds + y * MATRIX_WIDTH;
         auto pLine2 = pLine + halfWidth;
-        const CRGB leftCenter = pLine[halfWidth - 1];
-        const CRGB rightCenter = pLine[halfWidth];
-        memmove(pLine, pLine + scrollPixels, sizeof(CRGB) * (halfWidth - scrollPixels));
-        memmove(pLine2 + scrollPixels, pLine2, sizeof(CRGB) * (halfWidth - scrollPixels));
-        std::fill_n(pLine + halfWidth - scrollPixels, scrollPixels, leftCenter);
-        std::fill_n(pLine2, scrollPixels, rightCenter);
+        memmove(pLine, pLine + 1, sizeof(CRGB) * (halfWidth - 1));
+        memmove(pLine2 + 1, pLine2, sizeof(CRGB) * (halfWidth - 1));
     }
 }
 
@@ -210,7 +194,7 @@ void HUB75GFX::PrepareFrame()
     }
 }
 
-void HUB75GFX::PostProcessFrame(size_t localPixelsDrawn, size_t wifiPixelsDrawn)
+void HUB75GFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
 {
     if (localPixelsDrawn + wifiPixelsDrawn == 0)
         return;
@@ -279,7 +263,7 @@ void HUB75GFX::FlushFrameToMatrix()
     const float captionAlpha = shouldShowTitle ? gfx.GetCaptionTransparency() : 0.0f;
     if (captionAlpha > 0.0f)
     {
-        const String & caption = gfx.GetCaption();
+        const String caption = gfx.GetCaption();
         constexpr int charWidth = 6;
         constexpr int charHeight = 8;
         const int textWidth = caption.length() * charWidth;

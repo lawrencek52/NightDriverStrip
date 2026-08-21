@@ -937,6 +937,60 @@ textarea {
   line-height: 1;
 }
 
+/* Marks the strips a row's effect is currently playing on */
+.channel-button-active {
+  border-color: var(--line-strong);
+  color: var(--good);
+}
+
+/* Per-channel playback cards, above the effects table */
+.channel-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 12px;
+}
+
+.channel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.channel-title {
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgb(var(--card-rgb));
+}
+
+.channel-effect {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-fps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.channel-fps input {
+  width: 100%;
+  min-width: 0;
+}
+
 .preview-header {
   padding-top: 10px;
 }

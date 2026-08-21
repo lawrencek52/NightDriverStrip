@@ -65,8 +65,8 @@ void SoundAnalyzerBase::InitI2S_Modern()
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
-            .bclk = static_cast<gpio_num_t>(I2S_BCLK_PIN),
-            .ws = static_cast<gpio_num_t>(I2S_WS_PIN),
+            .bclk = I2S_BCLK_PIN,
+            .ws = I2S_WS_PIN,
             .dout = I2S_GPIO_UNUSED,
             .din = static_cast<gpio_num_t>(audioInputPin),
         },
@@ -110,9 +110,80 @@ void SoundAnalyzerBase::InitI2S_Legacy()
 #endif
 }
 
+void SoundAnalyzerBase::InitPDM_Modern()
+{
+#if USE_PDM_AUDIO && IS_IDF5
+    const auto audioInputPin = GetConfiguredAudioInputPin();
+    debugI("Audio: Initializing PDM Mic (Modern) on CLK:%d DIN:%d", PDM_CLK_PIN, audioInputPin);
+
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, NULL, &_rx_handle));
+
+    i2s_pdm_rx_config_t pdm_cfg = {
+        .clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(SAMPLING_FREQUENCY),
+        // Stereo for the same reason as the legacy path below: take both clock
+        // phases and resolve which one the mic drives at runtime. IDF 5 could
+        // instead flip gpio_cfg.invert_flags.clk_inv, but detecting beats
+        // guessing, and it keeps both backends on one code path.
+        .slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .clk = static_cast<gpio_num_t>(PDM_CLK_PIN),
+            .din = static_cast<gpio_num_t>(audioInputPin),
+        },
+    };
+
+    ESP_ERROR_CHECK(i2s_channel_init_pdm_rx_mode(_rx_handle, &pdm_cfg));
+    ESP_ERROR_CHECK(i2s_channel_enable(_rx_handle));
+#endif
+}
+
+void SoundAnalyzerBase::InitPDM_Legacy()
+{
+#if USE_PDM_AUDIO && !IS_IDF5
+    const auto audioInputPin = GetConfiguredAudioInputPin();
+    debugI("Audio: Initializing PDM Mic (Legacy) on CLK:%d DIN:%d", PDM_CLK_PIN, audioInputPin);
+
+    // PDM RX borrows the I2S peripheral: WS carries the mic clock and there is
+    // no bit clock at all.
+    //
+    // The receiver latches the data line on both clock phases and decodes them
+    // as a stereo pair, so which edge a given mic lands on is decided by how its
+    // L/R select is strapped, not by anything configurable - IDF 4.x exposes no
+    // clock inversion for PDM RX (i2s_set_pdm_rx_down_sample is the only knob).
+    // So capture both phases and let SamplePDM_Legacy pick the one carrying
+    // signal; that costs one extra DMA word per frame and cannot be wrong.
+    const i2s_config_t i2s_config = {.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
+                                     .sample_rate = SAMPLING_FREQUENCY,
+                                     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+                                     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+                                     .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+                                     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+                                     .dma_buf_count = 4,
+                                     .dma_buf_len = (int)MAX_SAMPLES,
+                                     .use_apll = false,
+                                     .tx_desc_auto_clear = false,
+                                     .fixed_mclk = 0};
+
+    const i2s_pin_config_t pin_config = {.bck_io_num = I2S_PIN_NO_CHANGE,
+                                         .ws_io_num = PDM_CLK_PIN,
+                                         .data_out_num = I2S_PIN_NO_CHANGE,
+                                         .data_in_num = audioInputPin};
+
+    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL));
+    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, &pin_config));
+    // Stereo, so both clock phases reach us. The PDM clock stays at 64 x the PCM
+    // rate either way - the decimator produces one frame per clock period and
+    // mono mode just discards a phase - so this does not disturb the 1.536MHz
+    // line clock at the default DSR of 8.
+    ESP_ERROR_CHECK(i2s_set_clk(I2S_NUM_0, SAMPLING_FREQUENCY, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_STEREO));
+    ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_NUM_0));
+    ESP_ERROR_CHECK(i2s_start(I2S_NUM_0));
+#endif
+}
+
 void SoundAnalyzerBase::InitADC_Modern()
 {
-#if !USE_M5 && !USE_I2S_AUDIO && IS_IDF5
+#if !USE_M5 && !USE_I2S_AUDIO && !USE_PDM_AUDIO && IS_IDF5
     debugI("Audio: Initializing I2S ADC Analog Mic (Modern) on Channel 0");
     adc_continuous_handle_cfg_t adc_config = {
         .max_store_buf_size = 1024,
@@ -143,7 +214,7 @@ void SoundAnalyzerBase::InitADC_Modern()
 
 void SoundAnalyzerBase::InitADC_Legacy()
 {
-#if !USE_M5 && !USE_I2S_AUDIO && !IS_IDF5 && defined(SOC_I2S_SUPPORTS_ADC)
+#if !USE_M5 && !USE_I2S_AUDIO && !USE_PDM_AUDIO && !IS_IDF5 && defined(SOC_I2S_SUPPORTS_ADC)
     debugI("Audio: Initializing I2S ADC Analog Mic (Legacy) on Channel 0");
     static_assert(SOC_I2S_SUPPORTS_ADC, "This ESP32 model does not support ADC built-in mode");
 

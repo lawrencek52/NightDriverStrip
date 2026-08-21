@@ -46,6 +46,7 @@
 #define IS_IDF5 (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0))
 
 #if IS_IDF5
+    #include <driver/i2s_pdm.h>
     #include <driver/i2s_std.h>
     #include <esp_adc/adc_continuous.h>
 #else
@@ -148,6 +149,40 @@ inline constexpr AudioInputParams kParamsI2SExternal
     1.5f,           // postScale (much higher gain for external I2S mics - was 4.0f)
     (1.0/3.0),      // compressGamma (cube root)
     1500000,        // quietEnvFloorGate (cutoff gates all ssound when below this level)
+    1000.0f         // liveAttackPerSec
+};
+
+// PDM tuning.
+//
+// Note that ProcessPeaksEnergy normalizes each band against an envelope derived
+// from the same signal, so it is scale-invariant: multiplying every sample by G
+// scales the band power, the peak envelope and the noise floor alike and cancels
+// out. PDM_GAIN therefore only buys headroom in the 16-bit sample word, not
+// responsiveness - everything below is what actually sets how hard this mic
+// drives the display.
+inline constexpr AudioInputParams kParamsPDM
+{
+    4.0f,           // windowPowerCorrection
+    // The noise floor rises toward the band level whenever a band is active, and
+    // that floor is then subtracted from it. At the shared 0.02 the floor catches
+    // up with sustained music in a second or two and erases it, which is why a
+    // clap - one frame, too fast to track - reads loud but a steady mix does not.
+    0.005f,         // energyNoiseAdapt
+    0.98f,          // energyNoiseDecay
+    // A transient pins the auto-gain envelope at its own magnitude; at 0.95 that
+    // takes ~3s to bleed off, muting everything behind it. 0.90 is ~0.7s.
+    0.93f,          // energyEnvDecay
+    0.01f,          // energyMinEnv
+    1.0f,           // bandCompHigh
+    2.0f,           // envFloorFromNoise (anchor nearer the real floor, not 3x it)
+    0.0f,           // frameSNRGate
+    2.0f,           // postScale (more display gain than a line-level source needs)
+    (1.0/4.0),      // compressGamma (softer than cube root; lifts mid-level bands)
+    // Disabled deliberately. This is an absolute magnitude, and it is the reason
+    // this mic was mute before PDM_GAIN existed. It is also redundant here: in a
+    // quiet room the noise floor converges on the band level, so the subtraction
+    // above already drives every band to zero without an absolute cutoff.
+    1500000,        // quietEnvFloorGate
     1000.0f         // liveAttackPerSec
 };
 
@@ -628,12 +663,16 @@ class SoundAnalyzerBase : public ISoundAnalyzer
     void InitM5();
     void InitI2S_Modern();
     void InitI2S_Legacy();
+    void InitPDM_Modern();
+    void InitPDM_Legacy();
     void InitADC_Modern();
     void InitADC_Legacy();
 
     size_t SampleM5();
     size_t SampleI2S_Modern();
     size_t SampleI2S_Legacy();
+    size_t SamplePDM_Modern();
+    size_t SamplePDM_Legacy();
     size_t SampleADC_Modern();
     size_t SampleADC_Legacy();
 };
@@ -675,6 +714,8 @@ class SoundAnalyzer : public SoundAnalyzerBase
     using ProjectSoundAnalyzer = SoundAnalyzer<kParamsM5>;
     #elif USE_I2S_AUDIO
     using ProjectSoundAnalyzer = SoundAnalyzer<kParamsI2SExternal>;
+    #elif USE_PDM_AUDIO
+    using ProjectSoundAnalyzer = SoundAnalyzer<kParamsPDM>;
     #else
     using ProjectSoundAnalyzer = SoundAnalyzer<kParamsMesmerizer>;
     #endif

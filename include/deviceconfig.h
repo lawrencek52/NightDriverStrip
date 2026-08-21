@@ -142,8 +142,7 @@ class DeviceConfig : public IJSONSerializable
     {
         WS281x,
         APA102,
-        HUB75,
-        M5LCD
+        HUB75
     };
 
     enum class WS281xColorOrder : uint8_t
@@ -168,8 +167,6 @@ class DeviceConfig : public IJSONSerializable
         OutputDriver driver =
         #if USE_HUB75
             OutputDriver::HUB75;
-        #elif USE_M5LCD
-            OutputDriver::M5LCD;
         #elif USE_APA102
             OutputDriver::APA102;
         #else
@@ -244,7 +241,6 @@ class DeviceConfig : public IJSONSerializable
     void SaveToJSON() const;
     static const char* DriverName(OutputDriver driver);
     static bool IsHub75Build();
-    static bool IsFixedMatrixBuild();
     void LogRuntimeConfig(const char* reason) const;
 
     template <typename T>
@@ -377,7 +373,7 @@ class DeviceConfig : public IJSONSerializable
     static constexpr uint16_t GetCompiledMatrixHeight() { return MATRIX_HEIGHT; }
     static constexpr bool GetCompiledMatrixSerpentine()
     {
-        #if USE_HUB75 || USE_M5LCD
+        #if USE_HUB75
             return false;
         #else
             return true;
@@ -394,8 +390,6 @@ class DeviceConfig : public IJSONSerializable
     {
         #if USE_HUB75
             return OutputDriver::HUB75;
-        #elif USE_M5LCD
-            return OutputDriver::M5LCD;
         #elif USE_APA102
             return OutputDriver::APA102;
         #else
@@ -417,11 +411,11 @@ class DeviceConfig : public IJSONSerializable
     const std::array<int8_t, NUM_CHANNELS>& GetAPA102DataPins() const { return runtimeOutputs.outputPins; }
     const std::array<int8_t, NUM_CHANNELS>& GetAPA102ClockPins() const { return runtimeOutputs.clockPins; }
     WS281xColorOrder GetWS281xColorOrder() const { return runtimeOutputs.colorOrder; }
-    bool SupportsLiveTopology() const { return !IsFixedMatrixBuild() && runtimeOutputs.driver == GetCompiledOutputDriver(); }
-    bool SupportsLiveOutputReconfigure() const { return !IsFixedMatrixBuild() && runtimeOutputs.driver == GetCompiledOutputDriver(); }
+    bool SupportsLiveTopology() const { return !IsHub75Build() && runtimeOutputs.driver == GetCompiledOutputDriver(); }
+    bool SupportsLiveOutputReconfigure() const { return !IsHub75Build() && runtimeOutputs.driver == GetCompiledOutputDriver(); }
     bool SupportsConfigurableAudioInputPin() const
     {
-        #if ENABLE_AUDIO && !USE_M5 && (USE_I2S_AUDIO || ELECROW)
+        #if ENABLE_AUDIO && !USE_M5 && (USE_I2S_AUDIO || USE_PDM_AUDIO || ELECROW)
             return true;
         #else
             return false;
@@ -446,6 +440,8 @@ class DeviceConfig : public IJSONSerializable
             return "m5_internal";
         #elif USE_I2S_AUDIO || ELECROW
             return "i2s";
+        #elif USE_PDM_AUDIO
+            return "pdm";
         #else
             return "adc_fixed";
         #endif

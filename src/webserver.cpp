@@ -222,6 +222,7 @@ void CWebServer::begin()
 
     _server.on("/currentEffect",         HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->SetCurrentEffectIndex(pRequest); });
     _server.on("/setCurrentEffectIndex", HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->SetCurrentEffectIndex(pRequest); });
+    _server.on("/channelFrameRate",      HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->SetChannelFrameRate(pRequest); });
     _server.on("/enableEffect",          HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->EnableEffect(pRequest); });
     _server.on("/disableEffect",         HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->DisableEffect(pRequest); });
     _server.on("/moveEffect",            HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->MoveEffect(pRequest); });

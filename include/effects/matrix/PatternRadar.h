@@ -79,7 +79,7 @@ public:
       CRGB color = graphics.ColorFromCurrentPalette(hue);
       uint8_t x = graphics.mapcos8(theta, offset, (MATRIX_WIDTH - 1) - offset);
       uint8_t y = graphics.mapsin8(theta, offset, (MATRIX_HEIGHT - 1) - offset);
-      size_t xzy = graphics.xy(x, y);
+      uint16_t xzy = graphics.xy(x, y);
       graphics.leds[xzy] = color;
 
       EVERY_N_MILLIS(25)

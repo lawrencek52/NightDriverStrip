@@ -154,23 +154,21 @@ private:
             }
         }
 
-        void move(uint8_t horizontalDistance, uint8_t verticalDistance)
+        void move()
         {
             switch (direction)
             {
             case UP:
-                pixels[0].y = (pixels[0].y + verticalDistance) % MATRIX_HEIGHT;
+                pixels[0].y = (pixels[0].y + 1) % MATRIX_HEIGHT;
                 break;
             case LEFT:
-                pixels[0].x = (pixels[0].x + horizontalDistance) % MATRIX_WIDTH;
+                pixels[0].x = (pixels[0].x + 1) % MATRIX_WIDTH;
                 break;
             case DOWN:
-                pixels[0].y =
-                    (pixels[0].y + MATRIX_HEIGHT - verticalDistance % MATRIX_HEIGHT) % MATRIX_HEIGHT;
+                pixels[0].y = pixels[0].y == 0 ? MATRIX_HEIGHT - 1 : pixels[0].y - 1;
                 break;
             case RIGHT:
-                pixels[0].x =
-                    (pixels[0].x + MATRIX_WIDTH - horizontalDistance % MATRIX_WIDTH) % MATRIX_WIDTH;
+                pixels[0].x = pixels[0].x == 0 ? MATRIX_WIDTH - 1 : pixels[0].x - 1;
                 break;
             }
         }
@@ -200,9 +198,9 @@ public:
     PatternCircuit(const JsonObjectConst& jsonObject) : EffectWithId<PatternCircuit>(jsonObject) { construct(); }
     ~PatternCircuit() = default;
 
-    unsigned long msStart = 0;
+    unsigned long msStart;
 
-    void Start() override
+    void start()
     {
         for (int i = 0; i < snakeCount; i++)
             snakes[i].reset();
@@ -215,22 +213,15 @@ public:
         // Reset after 20 seconds
         const auto kResetEveryNSeconds = 20;
         if (millis() - msStart > kResetEveryNSeconds * MILLIS_PER_SECOND)
-            Start();
+            start();
 
-        // Fading 10% of the pixels by 32 has an average whole-frame fade of
-        // about 3, but selecting those pixels required thousands of random()
-        // calls per frame on larger matrices. A sequential fade is visually
-        // equivalent and substantially faster.
-        g().DimAll(252);
+        for (int i = 0; i < MATRIX_WIDTH * MATRIX_HEIGHT / 10; i++)
+        {
+            g().leds[XY(random(0, MATRIX_WIDTH), random(0, MATRIX_HEIGHT))].fadeToBlackBy(32);
+        }
 
         // fill_palette(colors, SNAKE_LENGTH, initialHue++, 5, graphics.currentPalette, 255, LINEARBLEND);
         fill_palette(colors, SNAKE_LENGTH, 0, 4, ForestColors_p, 255, LINEARBLEND);
-        constexpr uint8_t kReferenceMatrixWidth = 64;
-        constexpr uint8_t kReferenceMatrixHeight = 32;
-        constexpr uint8_t kHorizontalMovementStep =
-            std::max(1, (MATRIX_WIDTH + kReferenceMatrixWidth / 2) / kReferenceMatrixWidth);
-        constexpr uint8_t kVerticalMovementStep =
-            std::max(1, (MATRIX_HEIGHT + kReferenceMatrixHeight / 2) / kReferenceMatrixHeight);
         for (int i = 0; i < snakeCount; i++)
         {
             Path *path = &snakes[i];
@@ -242,7 +233,7 @@ public:
                 path->newDirection();
             }
 
-            path->move(kHorizontalMovementStep, kVerticalMovementStep);
+            path->move();
             path->draw(g(), colors);
         }
     }

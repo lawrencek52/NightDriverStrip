@@ -80,7 +80,7 @@ public:
 
     int EstimatePowerDraw();
 
-    __attribute__((always_inline)) size_t xy(uint16_t x, uint16_t y) const noexcept override
+    __attribute__((always_inline)) uint16_t xy(uint16_t x, uint16_t y) const noexcept override
     {
         // Note the x,y are unsigned so can't be less than zero
         if (x < _width && y < _height)
@@ -103,7 +103,7 @@ public:
 
     float GetCaptionTransparency();
 
-    void SetCaption(const String & str, uint32_t duration) override;
+    void SetCaption(const String & str, uint32_t duration);
 
     void MoveInwardX(int startY = 0, int endY = MATRIX_HEIGHT - 1) override;
 
@@ -119,7 +119,7 @@ public:
     //
     // Things we do with the matrix after rendering a frame, such as setting the brightness and swapping the backbuffer forward
 
-    void PostProcessFrame(size_t localPixelsDrawn, size_t wifiPixelsDrawn) override;
+    void PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn) override;
 
     // Matrix interop
 

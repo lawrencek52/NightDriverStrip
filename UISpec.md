@@ -132,7 +132,8 @@ The device group is pushed to the right on wide layouts.
 `section.summary-grid` contains six `article.summary-card.panel` cards:
 
 1. Current Effect, `card-red`
-   - `#summaryCurrentEffect`
+   - `#summaryCurrentEffect` - reads `Per-strip` while the channels are showing
+     independent effects, since there is no single current effect to name
    - `#summaryEffectStatus`
 2. Interval, `card-yellow`
    - `#summaryInterval`
@@ -183,12 +184,26 @@ Each tab pane has `role=tabpanel`. Hidden panes must have the `hidden` attribute
   - eyebrow `Runtime Effects`
   - heading `Effects`
   - `#effectsMeta`
+- `div.channel-strip#channelStrip[hidden]`
 - `div.table-wrap`
   - `table.canvas-table`
     - columns: grip, On, Name, Status, Core, Actions
     - `tbody#effectsTableBody`
 
 Initial tbody should show one full-width loading row.
+
+`#channelStrip` holds one `div.channel-card` per output channel, each with a
+`div.channel-title` (`Strip <n>`), a `div.channel-effect` naming what that channel
+is playing, and a `label.channel-fps` wrapping a numeric input that posts to
+`/channelFrameRate`. It is rendered from the `channelEffects`, `channelFrameRates`
+and `channelFrameRateOverrides` arrays returned by `/effects`, and stays hidden on
+single-channel devices.
+
+In the Actions column, the `▶` button activates an effect on every channel; on
+multi-channel devices it is followed by one numbered button per channel that
+activates the effect on that channel alone, carrying `.channel-button-active` when
+that channel is already playing it. The Status column reads `All strips` or
+`Strip <n>, <n>` in place of `Active` while the channels are independent.
 
 #### Settings Pane
 

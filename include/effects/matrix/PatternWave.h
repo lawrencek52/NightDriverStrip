@@ -74,8 +74,10 @@ class PatternWave : public EffectWithId<PatternWave>
 
     uint8_t rotation = 0;
 
-    static constexpr uint16_t maxX = MATRIX_WIDTH - 1;
-    static constexpr uint16_t maxY = MATRIX_HEIGHT - 1;
+    uint8_t scale = 256 / MATRIX_WIDTH;
+
+    uint8_t maxX = MATRIX_WIDTH - 1;
+    uint8_t maxY = MATRIX_HEIGHT - 1;
 
     uint8_t waveCount = 1;
 
@@ -101,72 +103,56 @@ public:
     {
         auto& graphics = g();
 
+        int n = 0;
+
         switch (rotation) {
             case 0:
-            case 2:
-            {
-                int previousY = -1;
-                int previousMirrorY = -1;
                 for (int x = 0; x < MATRIX_WIDTH; x++) {
-                    const uint8_t phase = static_cast<uint8_t>(
-                        rotation == 0 ? x * 2 + theta : x * 2 - theta);
-                    const int y = static_cast<int>(
-                        (static_cast<uint32_t>(quadwave8(phase)) * maxY + 127) / 255);
-                    const CRGB color = graphics.ColorFromCurrentPalette(x + hue);
-
-                    if (previousY >= 0 && (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
-                        graphics.drawLine(x - 1, previousY, x, y, color);
-                    else
-                        graphics.setPixel(x, y, color);
-                    previousY = y;
-
-                    if (waveCount == 2)
+                    n = quadwave8(x * 2 + theta) / scale;
+                    if (n < MATRIX_HEIGHT)
                     {
-                        const int mirrorY = maxY - y;
-                        if (previousMirrorY >= 0 &&
-                            (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
-                            graphics.drawLine(
-                                x - 1, previousMirrorY, x, mirrorY, color);
-                        else
-                            graphics.setPixel(x, mirrorY, color);
-                        previousMirrorY = mirrorY;
+                        graphics.setPixel(x, n, graphics.ColorFromCurrentPalette(x + hue));
+                        if (waveCount == 2)
+                            graphics.setPixel(x, maxY - n, graphics.ColorFromCurrentPalette(x + hue));
                     }
                 }
                 break;
-            }
 
             case 1:
-            case 3:
-            {
-                int previousX = -1;
-                int previousMirrorX = -1;
                 for (int y = 0; y < MATRIX_HEIGHT; y++) {
-                    const uint8_t phase = static_cast<uint8_t>(
-                        rotation == 1 ? y * 2 + theta : y * 2 - theta);
-                    const int x = static_cast<int>(
-                        (static_cast<uint32_t>(quadwave8(phase)) * maxX + 127) / 255);
-                    const CRGB color = graphics.ColorFromCurrentPalette(y + hue);
-
-                    if (previousX >= 0 && (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
-                        graphics.drawLine(previousX, y - 1, x, y, color);
-                    else
-                        graphics.setPixel(x, y, color);
-                    previousX = x;
-
-                    if (waveCount == 2)
+                    n = quadwave8(y * 2 + theta) / scale;
+                    if (n < MATRIX_WIDTH)
                     {
-                        const int mirrorX = maxX - x;
-                        if (previousMirrorX >= 0 &&
-                            (MATRIX_WIDTH > 64 || MATRIX_HEIGHT > 32))
-                            graphics.drawLine(
-                                previousMirrorX, y - 1, mirrorX, y, color);
-                        else
-                            graphics.setPixel(mirrorX, y, color);
-                        previousMirrorX = mirrorX;
+                        graphics.setPixel(n, y, graphics.ColorFromCurrentPalette(y + hue));
+                        if (waveCount == 2)
+                            graphics.setPixel(maxX - n, y, graphics.ColorFromCurrentPalette(y + hue));
                     }
                 }
                 break;
-            }
+
+            case 2:
+                for (int x = 0; x < MATRIX_WIDTH; x++) {
+                    n = quadwave8(x * 2 - theta) / scale;
+                    if (n < MATRIX_HEIGHT)
+                    {
+                        graphics.setPixel(x, n, graphics.ColorFromCurrentPalette(x + hue));
+                        if (waveCount == 2)
+                            graphics.setPixel(x, maxY - n, graphics.ColorFromCurrentPalette(x + hue));
+                    }
+                }
+                break;
+
+            case 3:
+                for (int y = 0; y < MATRIX_HEIGHT; y++) {
+                    n = quadwave8(y * 2 - theta) / scale;
+                    if (n < MATRIX_WIDTH)
+                    {
+                        graphics.setPixel(n, y, graphics.ColorFromCurrentPalette(y + hue));
+                        if (waveCount == 2)
+                            graphics.setPixel(maxX - n, y, graphics.ColorFromCurrentPalette(y + hue));
+                    }
+                }
+                break;
         }
 
         graphics.DimAll(254);
