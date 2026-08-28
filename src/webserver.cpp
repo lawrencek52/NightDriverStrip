@@ -275,6 +275,13 @@ void CWebServer::begin()
         }
     });
 
+    // Build and cache the device setting specs JSON now, rather than paying for it lazily on
+    // whichever request happens to hit /settings/specs first. That first hit otherwise lands
+    // during the same busy boot window as WiFi/NTP/effect-manager startup work, making the
+    // browser's initial Settings tab load noticeably slower than later ones.
+    if (!EnsureDeviceSettingSpecsJson())
+        debugW("WebServer: failed to pre-warm device setting specs JSON cache.");
+
     _server.begin();
 
     debugI("HTTP server started");

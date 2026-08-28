@@ -933,17 +933,13 @@ bool ProcessIncomingData(allocated_unique_ptr<uint8_t[]> &payloadData, size_t pa
 
                         bool bDone = false;
                         auto &bufferManager = g_ptrSystem->GetBufferManagers()[iChannel];
-                        const size_t channelLedCount = bufferManager.LEDCount();
 
-                        // Validate against the active channel before reserving a
-                        // circular-buffer slot. Reserving first meant a rejected
-                        // packet could leave an old frame queued in the new slot.
-                        if (!LEDBuffer::ValidateWirePayload(payloadData.get(), payloadLength, channelLedCount))
-                        {
-                            debugW("Pixel packet rejected for channel %d: %lu LEDs, channel has %zu",
-                                   iChannel, (unsigned long)length32, channelLedCount);
-                            return false;
-                        }
+                        // No pre-check against the channel's current (possibly shrunk) live LED
+                        // count here: senders are always allowed to submit up to the compiled max
+                        // regardless of what's presently configured, and LEDBuffer::UpdateFromWire()
+                        // below validates against that fixed max on the buffer that actually receives
+                        // the data. Rejecting - and thereby forcing the sender to reconnect - based on
+                        // a transient, possibly-stale live count was both unnecessary and disruptive.
 
                         if (!bufferManager.IsEmpty())
                         {

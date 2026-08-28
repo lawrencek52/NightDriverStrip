@@ -511,13 +511,15 @@ class TwinkleEffect : public EffectWithId<TwinkleEffect>
                 setPixelOnAllChannels(i, CRGB::Black);
             }
 
-            // Pick a random pixel and put it in the TOP slot
+            // Pick a random pixel and put it in the TOP slot. Use _cLEDs (this effect
+            // instance's actual channel LED count) rather than the compile-time NUM_LEDS,
+            // since per-channel effect clones can run on a strip shorter than that default.
             for (int iLoop = 0; iLoop < 2; iLoop++)
             {
               int iNew = -1;
-              for (int iPass = 0; iPass < NUM_LEDS * 20; iPass++)
+              for (int iPass = 0; iPass < (int)_cLEDs * 20; iPass++)
               {
-                  size_t i = random(0, NUM_LEDS);
+                  size_t i = random(0, _cLEDs);
                   if (_GFX[0]->getPixel(i) != CRGB::Black)
                       continue;
                   if (litPixels.end() != find(litPixels.begin(), litPixels.end(), i))

@@ -49,7 +49,9 @@ class LEDBuffer
 
   private:
 
-    allocated_unique_ptr<CRGB []> _leds;
+    allocated_unique_ptr<CRGB []> _leds;               // Always sized to the compiled max (NUM_LEDS), not
+                                                        // the strand's current (possibly shrunk) live LED
+                                                        // count - see UpdateFromWire()/ValidateWirePayload().
     uint32_t                 _pixelCount;
     uint64_t                 _timeStampMicroseconds;
     uint64_t                 _timeStampSeconds;

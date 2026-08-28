@@ -28,6 +28,7 @@
 //---------------------------------------------------------------------------
 
 #include "globals.h"
+
 #include "audioserialbridge.h"
 #include "audioservice.h"
 #include "colorstreamerservice.h"

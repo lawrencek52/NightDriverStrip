@@ -17,7 +17,10 @@ LEDBuffer::LEDBuffer(std::shared_ptr<GFXBase> pStrand) :
              _timeStampMicroseconds(0),
              _timeStampSeconds(0)
 {
-    _leds = make_unique_psram<CRGB[]>(_pStrand->GetLEDCount());
+    // Sized to the compiled max, not the strand's current LED count: a runtime topology
+    // change can shrink or grow the live channel, but senders are always allowed to submit
+    // up to NUM_LEDS pixels regardless of what's currently configured (see UpdateFromWire).
+    _leds = make_unique_psram<CRGB[]>(NUM_LEDS);
 }
 
 uint64_t LEDBuffer::Seconds()      const  { return _timeStampSeconds;      }
@@ -107,7 +110,11 @@ bool LEDBuffer::UpdateFromWire(const uint8_t* payloadData, size_t payloadLength)
     }
 
     size_t payloadBytes = 0;
-    if (!ValidateWirePayload(payloadData, payloadLength, _pStrand->GetLEDCount(), &payloadBytes))
+    // Validated against the compiled max (NUM_LEDS), not the channel's current live LED count:
+    // a strand that's momentarily shorter than what's arriving is expected and fine - the extra
+    // pixels are simply clipped by fillLeds()'s per-pixel bounds check when drawn. Rejecting the
+    // packet (and forcing the sender to reconnect) here would be actively wrong.
+    if (!ValidateWirePayload(payloadData, payloadLength, NUM_LEDS, &payloadBytes))
         return false;
 
     uint16_t command16 = WORDFromMemory(&payloadData[0]);
@@ -145,17 +152,9 @@ void LEDBuffer::DrawBuffer()
 
 void LEDBuffer::Reconfigure(std::shared_ptr<GFXBase> pStrand)
 {
-    const auto nextLedCount = pStrand ? pStrand->GetLEDCount() : 0;
-    const auto currentLedCount = _pStrand ? _pStrand->GetLEDCount() : 0;
-
+    // _leds is sized to NUM_LEDS for the buffer's whole lifetime (see the constructor), so a
+    // topology change only needs to retarget which strand this buffer draws into - no resize.
     _pStrand = std::move(pStrand);
-
-    // Pin/color-order changes should not churn every buffered frame. Only reallocate when the
-    // actual LED count changes; otherwise just retarget the buffer to the new strand config.
-    if (nextLedCount != currentLedCount)
-    {
-        _leds = make_unique_psram<CRGB[]>(nextLedCount);
-    }
 
     _pixelCount = 0;
     _timeStampMicroseconds = 0;

@@ -600,6 +600,7 @@ SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& co
     _colorOrder = config.GetWS281xColorOrder();
 
     LogRuntimeWS281xConfiguration(config, devices, "apply");
+
     return { true, "" };
 }
 

@@ -236,19 +236,27 @@ void LEDStripEffect::fillSolidOnAllChannels(CRGB color, int iStart, int numToFil
 
     for (auto& device : _GFX)
     {
+        // _cLEDs matches _GFX[0]'s count; in individual-strips mode another channel can be
+        // shorter, so clamp the raw fill to this device's own size rather than trusting the
+        // shared bound - fill_solid()/memset() below don't do their own per-pixel bounds check.
+        const auto deviceLEDCount = static_cast<int>(device->GetLEDCount());
+        const int deviceFillCount = std::min(numToFill, std::max(0, deviceLEDCount - iStart));
+        if (deviceFillCount <= 0)
+            continue;
+
         if (everyN == 1)
         {
-            fill_solid(device->leds + iStart, numToFill, color);
+            fill_solid(device->leds + iStart, deviceFillCount, color);
             // Zero the matching whites range so a prior CCT-aware effect's
             // residual W intensity doesn't bleed under the new solid color.
             // Mirrors the leds[] semantics: "fill with X" means "this region
             // now displays X and nothing else."
             if (device->whites)
-                memset(device->whites + iStart, 0, numToFill * sizeof(CRGBW));
+                memset(device->whites + iStart, 0, deviceFillCount * sizeof(CRGBW));
             continue;
         }
 
-        for (int i = iStart; i < iStart + numToFill; i += everyN)
+        for (int i = iStart; i < iStart + deviceFillCount; i += everyN)
         {
             device->leds[i] = color;
             if (device->whites)
@@ -282,7 +290,7 @@ void LEDStripEffect::clearWhitesOnAllChannels()
 {
     for (auto& device : _GFX)
         if (device->whites)
-            memset(device->whites, 0, _cLEDs * sizeof(CRGBW));
+            memset(device->whites, 0, device->GetLEDCount() * sizeof(CRGBW));
 }
 
 // ClearFrameOnAllChannels
@@ -347,8 +355,10 @@ void LEDStripEffect::fadePixelToBlackOnAllChannelsBy(int pixel, uint8_t fadeValu
 
 void LEDStripEffect::fadeAllChannelsToBlackBy(uint8_t fadeValue) const
 {
+    // _cLEDs matches _GFX[0]'s count; another channel can be shorter in individual-strips
+    // mode, and this writes device->leds[] directly with no per-pixel bounds check.
     for (auto& device : _GFX)
-        for (size_t i = 0; i < _cLEDs; ++i)
+        for (size_t i = 0; i < device->GetLEDCount(); ++i)
             GFXBase::FadePixelInPlace(device->leds[i], fadeValue);
 }
 
@@ -357,11 +367,12 @@ void LEDStripEffect::setAllOnAllChannels(uint8_t r, uint8_t g, uint8_t b) const
     const CRGB color(r, g, b);
     for (auto& device : _GFX)
     {
-        fill_solid(device->leds, _cLEDs, color);
+        const auto deviceLEDCount = device->GetLEDCount();
+        fill_solid(device->leds, deviceLEDCount, color);
         // Same rationale as fillSolidOnAllChannels: "set everything to X"
         // implies "no residual whites from a previous effect."
         if (device->whites)
-            memset(device->whites, 0, _cLEDs * sizeof(CRGBW));
+            memset(device->whites, 0, deviceLEDCount * sizeof(CRGBW));
     }
 }
 
