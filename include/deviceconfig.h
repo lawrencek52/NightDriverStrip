@@ -155,11 +155,29 @@ class DeviceConfig : public IJSONSerializable
         BGR
     };
 
+    // Layout type describes how multiple WS281x channels map to pixels:
+    //   Matrix           - every channel carries the same width*height pixel grid, laid out as a matrix
+    //                      (serpentine optional). All channels must use the same LED count, set via
+    //                      RuntimeTopology.width and RuntimeTopology.height.
+    //   IndividualStrips - each channel is its own strip with its own length. The total LED count is
+    //                      the sum of RuntimeTopology.stripLengths[0..channelCount-1]. Matrix
+    //                      width/height/serpentine are ignored.
+    enum class LayoutType : uint8_t
+    {
+        Matrix,
+        IndividualStrips
+    };
+
     struct RuntimeTopology
     {
+        LayoutType layout = LayoutType::Matrix;
         uint16_t width = MATRIX_WIDTH;
         uint16_t height = MATRIX_HEIGHT;
         bool serpentine = true;
+        // Per-channel LED counts. Used when layout == IndividualStrips; ignored otherwise. Defaults
+        // are populated in DeviceConfig::DeviceConfig() so that newly-saved configs always carry
+        // a sensible array even before the user edits it.
+        std::array<uint16_t, NUM_CHANNELS> stripLengths{};
     };
 
     struct RuntimeOutputs
@@ -236,6 +254,12 @@ class DeviceConfig : public IJSONSerializable
     std::vector<SettingSpec, psram_allocator<SettingSpec>> settingSpecs;
     std::vector<std::reference_wrapper<SettingSpec>> settingSpecReferences;
     std::vector<String> pinSpecStrings;
+    // Per-strip length spec labels. Stored in std::string (not Arduino String) because the
+    // Arduino String's SSO buffer can hold stack garbage if the SSO/heap flag ends up wrong,
+    // which leaks into the c_str() pointers stored in the per-strip SettingSpec objects. The
+    // std::string instances here outlive DeviceConfig::GetSettingSpecs() so those pointers
+    // stay valid for the lifetime of the device.
+    std::vector<std::string> _stripLengthStrings;
     size_t writerIndex;
 
     void SaveToJSON() const;
@@ -291,6 +315,12 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * MatrixWidthTag = "matrixWidth";
     static constexpr const char * MatrixHeightTag = "matrixHeight";
     static constexpr const char * MatrixSerpentineTag = "matrixSerpentine";
+    static constexpr const char * MatrixLayoutTag = "matrixLayout";
+    static constexpr const char * MatrixStripLengthsTag = "matrixStripLengths";
+    // Base prefix for the per-channel strip-length specs. The webserver and setting-spec
+    // generators append the channel index (e.g. MatrixStripLength0Tag becomes
+    // "matrixStripLength0", "matrixStripLength1", ...).
+    static constexpr const char * MatrixStripLength0Tag = "matrixStripLength0";
     static constexpr const char * OutputDriverTag = "outputDriver";
     static constexpr const char * WS281xChannelCountTag = "ws281xChannelCount";
     static constexpr const char * WS281xPinsTag = "ws281xPins";
@@ -403,7 +433,13 @@ class DeviceConfig : public IJSONSerializable
     uint16_t GetMatrixWidth() const { return runtimeTopology.width; }
     uint16_t GetMatrixHeight() const { return runtimeTopology.height; }
     bool IsMatrixSerpentine() const { return runtimeTopology.serpentine; }
-    size_t GetActiveLEDCount() const { return static_cast<size_t>(runtimeTopology.width) * runtimeTopology.height; }
+    LayoutType GetLayout() const { return runtimeTopology.layout; }
+    const std::array<uint16_t, NUM_CHANNELS>& GetStripLengths() const { return runtimeTopology.stripLengths; }
+    // Per-channel LED count. For Matrix layout this is width * height (every channel carries the
+    // full pixel grid); for IndividualStrips this is stripLengths[channel], bounded by the active
+    // channel count.
+    uint16_t GetChannelLEDCount(size_t channel) const;
+    size_t GetActiveLEDCount() const;
     int GetAudioInputPin() const { return audioInputPin; }
     OutputDriver GetOutputDriver() const { return runtimeOutputs.driver; }
     size_t GetChannelCount() const { return runtimeOutputs.channelCount; }
@@ -452,6 +488,7 @@ class DeviceConfig : public IJSONSerializable
 
     SuccessResultWithMessage ValidateAudioInputPin(int pin) const;
     SuccessResultWithMessage ValidateTopology(uint16_t width, uint16_t height, bool serpentine) const;
+    SuccessResultWithMessage ValidateStripLengths(const std::array<uint16_t, NUM_CHANNELS>& lengths, size_t channelCount) const;
     SuccessResultWithMessage ValidateOutputDriver(OutputDriver driver) const;
     SuccessResultWithMessage ValidateStripSettings(size_t channelCount,
                                                    const std::array<int8_t, NUM_CHANNELS>& dataPins,

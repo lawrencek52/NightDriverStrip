@@ -139,9 +139,10 @@ void DeviceConfig::LogRuntimeConfig(const char* reason) const
         activeClockPins += String(runtimeOutputs.clockPins[i]);
     }
 
-    debugI("Runtime config (%s): driver=%s matrix=%ux%u leds=%u serpentine=%d channels=%u colorOrder=%s audioPin=%d",
+    debugI("Runtime config (%s): driver=%s layout=%s matrix=%ux%u leds=%u serpentine=%d channels=%u colorOrder=%s audioPin=%d",
            reason,
            DriverName(runtimeOutputs.driver),
+           runtimeTopology.layout == LayoutType::IndividualStrips ? "individualStrips" : "matrix",
            runtimeTopology.width,
            runtimeTopology.height,
            static_cast<unsigned>(GetActiveLEDCount()),
@@ -149,17 +150,62 @@ void DeviceConfig::LogRuntimeConfig(const char* reason) const
             static_cast<unsigned>(runtimeOutputs.channelCount),
            GetColorOrderName(runtimeOutputs.colorOrder).c_str(),
            audioInputPin);
+
+    if (runtimeTopology.layout == LayoutType::IndividualStrips)
+    {
+        String lengths;
+        for (size_t i = 0; i < runtimeOutputs.channelCount && i < runtimeTopology.stripLengths.size(); ++i)
+        {
+            if (!lengths.isEmpty())
+                lengths += ',';
+            lengths += String(runtimeTopology.stripLengths[i]);
+        }
+        debugI("Runtime config strip lengths (%s): %s", reason, lengths.c_str());
+    }
+
     debugI("Runtime config pins (%s): data=%s clock=%s", reason, activePins.c_str(), activeClockPins.c_str());
+}
+
+uint16_t DeviceConfig::GetChannelLEDCount(size_t channel) const
+{
+    if (channel >= runtimeOutputs.channelCount || channel >= runtimeTopology.stripLengths.size())
+        return 0;
+
+    if (runtimeTopology.layout == LayoutType::IndividualStrips)
+        return runtimeTopology.stripLengths[channel];
+
+    return static_cast<uint16_t>(static_cast<size_t>(runtimeTopology.width) * runtimeTopology.height);
+}
+
+size_t DeviceConfig::GetActiveLEDCount() const
+{
+    if (runtimeTopology.layout == LayoutType::IndividualStrips)
+    {
+        size_t total = 0;
+        const size_t count = std::min(runtimeOutputs.channelCount, runtimeTopology.stripLengths.size());
+        for (size_t i = 0; i < count; ++i)
+            total += runtimeTopology.stripLengths[i];
+        return total;
+    }
+
+    return static_cast<size_t>(runtimeTopology.width) * runtimeTopology.height;
 }
 
 DeviceConfig::DeviceConfig()
 {
     runtimeTopology.serpentine = !IsHub75Build();
+    runtimeTopology.layout = LayoutType::Matrix;
     runtimeOutputs.driver = GetCompiledOutputDriver();
     runtimeOutputs.channelCount = NUM_CHANNELS;
     runtimeOutputs.outputPins = GetCompiledWS281xPins();
     runtimeOutputs.clockPins = GetCompiledAPA102ClockPins();
     runtimeOutputs.colorOrder = GetCompiledWS281xColorOrder();
+
+    // Default every per-strip length to the compiled matrix LED count. For Matrix layouts this
+    // value is unused, but it keeps a freshly-saved config sensible if the user later flips to
+    // IndividualStrips without first editing each channel.
+    const uint16_t defaultStripLength = static_cast<uint16_t>(GetCompiledLEDCount());
+    runtimeTopology.stripLengths.fill(defaultStripLength);
 
     writerIndex = g_ptrSystem->GetJSONWriter().RegisterWriter(
         [this] { assert(SaveToJSONFile(DEVICE_CONFIG_FILE, *this)); }
@@ -219,6 +265,12 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
     jsonDoc[MatrixWidthTag] = runtimeTopology.width;
     jsonDoc[MatrixHeightTag] = runtimeTopology.height;
     jsonDoc[MatrixSerpentineTag] = runtimeTopology.serpentine;
+    jsonDoc[MatrixLayoutTag] = runtimeTopology.layout == LayoutType::IndividualStrips ? "individualStrips" : "matrix";
+
+    auto stripLengths = jsonDoc[MatrixStripLengthsTag].to<JsonArray>();
+    for (auto length : runtimeTopology.stripLengths)
+        stripLengths.add(length);
+
     jsonDoc[OutputDriverTag] = DriverName(runtimeOutputs.driver);
     jsonDoc[WS281xChannelCountTag] = runtimeOutputs.channelCount;
     jsonDoc[WS281xColorOrderTag] = GetColorOrderName(runtimeOutputs.colorOrder);
@@ -305,6 +357,66 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
     SetIfPresentIn(jsonObject, updated.topology.width, MatrixWidthTag);
     SetIfPresentIn(jsonObject, updated.topology.height, MatrixHeightTag);
     SetIfPresentIn(jsonObject, updated.topology.serpentine, MatrixSerpentineTag);
+
+    if (jsonObject[MatrixLayoutTag].is<String>())
+    {
+        const auto layoutName = jsonObject[MatrixLayoutTag].as<String>();
+        if (layoutName == "individualStrips" || layoutName == "individual")
+            updated.topology.layout = LayoutType::IndividualStrips;
+        else
+            updated.topology.layout = LayoutType::Matrix;
+    }
+
+    if (jsonObject[MatrixStripLengthsTag].is<JsonArrayConst>())
+    {
+        auto lengths = jsonObject[MatrixStripLengthsTag].as<JsonArrayConst>();
+        for (size_t i = 0; i < updated.topology.stripLengths.size() && i < lengths.size(); ++i)
+        {
+            if (lengths[i].is<int>())
+                updated.topology.stripLengths[i] = static_cast<uint16_t>(lengths[i].as<int>());
+        }
+    }
+    else
+    {
+        // Backward compatibility: older configs persisted per-strip lengths as matrixStripLength0,
+        // matrixStripLength1, ... (one tag per index). Pull those in if the unified array is missing.
+        for (size_t i = 0; i < updated.topology.stripLengths.size(); ++i)
+        {
+            const String tag = String(MatrixStripLength0Tag) + String(static_cast<unsigned>(i));
+            if (jsonObject[tag].is<int>())
+                updated.topology.stripLengths[i] = static_cast<uint16_t>(jsonObject[tag].as<int>());
+        }
+    }
+
+    // Sanitize any persisted values that look like they were never initialised. When the
+    // RuntimeTopology struct grew to carry the new stripLengths field, on devices upgraded
+    // from a build that didn't include that field the JSON document could end up with the
+    // extra slots holding whatever bytes happened to be in memory. Validate each value's
+    // range here and, if it's clearly not a real setting, snap it back to the compile-time
+    // default before it gets re-serialised back to SPIFFS or shipped out as part of the
+    // unified /settings or /api/v1/settings response.
+    const uint16_t compiledMaxLEDs = static_cast<uint16_t>(GetCompiledLEDCount());
+    if (updated.topology.width == 0 || updated.topology.width > compiledMaxLEDs)
+    {
+        debugW("Persisted matrixWidth %u out of range, resetting to %u", updated.topology.width, MATRIX_WIDTH);
+        updated.topology.width = MATRIX_WIDTH;
+    }
+    if (updated.topology.height == 0 || updated.topology.height > compiledMaxLEDs)
+    {
+        debugW("Persisted matrixHeight %u out of range, resetting to %u", updated.topology.height, MATRIX_HEIGHT);
+        updated.topology.height = MATRIX_HEIGHT;
+    }
+    {
+        const uint16_t defaultStripLength = compiledMaxLEDs;
+        for (auto& length : updated.topology.stripLengths)
+        {
+            if (length == 0 || length > compiledMaxLEDs)
+            {
+                debugW("Persisted stripLength %u out of range, resetting to %u", length, defaultStripLength);
+                length = defaultStripLength;
+            }
+        }
+    }
 
     if (jsonObject[OutputDriverTag].is<String>())
     {

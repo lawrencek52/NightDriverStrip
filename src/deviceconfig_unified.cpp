@@ -12,6 +12,7 @@
 
 #include "globals.h"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <optional>
@@ -190,6 +191,27 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     topology["width"] = GetMatrixWidth();
     topology["height"] = GetMatrixHeight();
     topology["serpentine"] = IsMatrixSerpentine();
+    topology["layout"] = GetLayout() == LayoutType::IndividualStrips ? "individualStrips" : "matrix";
+
+    // For individual-strip layouts, expose width as the longest strip and height as 1 so the
+    // existing preview/stat cards (which assume a rectangular pixel grid) keep working. The
+    // real per-channel counts live in topology.stripLengths below.
+    if (GetLayout() == LayoutType::IndividualStrips)
+    {
+        uint16_t maxStripLength = 0;
+        for (size_t i = 0; i < GetChannelCount() && i < runtimeTopology.stripLengths.size(); ++i)
+            maxStripLength = std::max(maxStripLength, runtimeTopology.stripLengths[i]);
+        if (maxStripLength > 0)
+        {
+            topology["width"] = maxStripLength;
+            topology["height"] = 1;
+        }
+    }
+
+    auto stripLengths = topology["stripLengths"].to<JsonArray>();
+    for (auto length : runtimeTopology.stripLengths)
+        stripLengths.add(length);
+
     topology["ledCount"] = GetActiveLEDCount();
     topology["liveApply"] = SupportsLiveTopology();
 
@@ -230,6 +252,21 @@ void DeviceConfig::SerializeUnifiedSettingsSchema(JsonObject root) const
     topology["compiledMaxLEDs"] = GetCompiledLEDCount();
     topology["liveApply"] = SupportsLiveTopology();
     topology["rejectMessage"] = DeviceConfigInternal::RecompileNeededMessage();
+
+    // HUB75 panels have a fixed matrix layout baked into the firmware, so the layout selector
+    // can only meaningfully stay on Matrix there. Strip builds expose both options.
+    auto supportedLayouts = topology["supportedLayouts"].to<JsonArray>();
+    if (IsHub75Build())
+    {
+        supportedLayouts.add("matrix");
+    }
+    else
+    {
+        supportedLayouts.add("matrix");
+        supportedLayouts.add("individualStrips");
+    }
+    topology["compiledMaxChannels"] = GetCompiledChannelCount();
+    topology["compiledMaxStripLength"] = GetCompiledLEDCount();
 
     auto outputs = root["outputs"].to<JsonObject>();
     outputs["compiledDriver"] = GetCompiledDriverName();
@@ -356,6 +393,32 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
         if (topology["serpentine"].is<bool>())
         {
             out.requestedRuntimeConfig.topology.serpentine = topology["serpentine"].as<bool>();
+            out.runtimeConfigTouched = true;
+        }
+        if (topology["layout"].is<String>())
+        {
+            const auto layoutName = topology["layout"].as<String>();
+            if (layoutName == "individualStrips" || layoutName == "individual")
+                out.requestedRuntimeConfig.topology.layout = LayoutType::IndividualStrips;
+            else
+                out.requestedRuntimeConfig.topology.layout = LayoutType::Matrix;
+            out.runtimeConfigTouched = true;
+        }
+        if (topology["stripLengths"].is<JsonArrayConst>())
+        {
+            auto lengths = topology["stripLengths"].as<JsonArrayConst>();
+            for (size_t i = 0; i < out.requestedRuntimeConfig.topology.stripLengths.size() && i < lengths.size(); ++i)
+            {
+                if (lengths[i].is<int>())
+                {
+                    const int requested = lengths[i].as<int>();
+                    if (requested < 0)
+                        return { false, String("topology.stripLengths[") + i + "] must be a positive integer" };
+                    if (requested > std::numeric_limits<uint16_t>::max())
+                        return { false, String("topology.stripLengths[") + i + "] is too large" };
+                    out.requestedRuntimeConfig.topology.stripLengths[i] = static_cast<uint16_t>(requested);
+                }
+            }
             out.runtimeConfigTouched = true;
         }
     }

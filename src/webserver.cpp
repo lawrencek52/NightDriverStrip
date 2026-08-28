@@ -336,6 +336,12 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         j["COMPILED_NUM_LEDS"]          = DeviceConfig::GetCompiledLEDCount();
         j["COMPILED_NUM_CHANNELS"]      = DeviceConfig::GetCompiledChannelCount();
         j["ACTIVE_NUM_CHANNELS"]        = deviceConfig.GetChannelCount();
+        j["ACTIVE_LAYOUT"]              = deviceConfig.GetLayout() == DeviceConfig::LayoutType::IndividualStrips
+                                                ? "individualStrips"
+                                                : "matrix";
+        auto stripLengths = j["ACTIVE_STRIP_LENGTHS"].to<JsonArray>();
+        for (size_t i = 0; i < DeviceConfig::GetCompiledChannelCount(); ++i)
+            stripLengths.add(deviceConfig.GetChannelLEDCount(i));
         j["COMPILED_OUTPUT_DRIVER"]     = deviceConfig.GetCompiledDriverName();
         j["ACTIVE_OUTPUT_DRIVER"]       = deviceConfig.GetRuntimeDriverName();
         j["COMPILED_WS281X_COLOR_ORDER"] = DeviceConfig::GetColorOrderName(DeviceConfig::GetCompiledWS281xColorOrder());
@@ -391,9 +397,18 @@ void CWebServer::Reset(AsyncWebServerRequest * pRequest)
 
     if (boardResetRequested)
     {
-        // Flush any pending writes and make sure nothing is written after. We do this to make sure
-        //   that what needs saving is written, but no further writes take place after any requested
-        //   config resets have happened.
+        // Force a synchronous save of the device config BEFORE rebooting. The async JSON writer
+        // batches writes for JSON_WRITER_DELAY milliseconds before flushing, and a 3 second delay
+        // isn't enough headroom to guarantee completion before ESP.restart() in some situations -
+        // settings would silently be lost. SaveToJSONFile acquires JSONFilesystemWriteMutex so it
+        // serializes cleanly against any in-flight async writer invocation.
+        if (g_ptrSystem && g_ptrSystem->HasDeviceConfig())
+        {
+            if (!SaveToJSONFile(DEVICE_CONFIG_FILE, g_ptrSystem->GetDeviceConfig()))
+            {
+                debugE("Synchronous DeviceConfig save before reboot failed!");
+            }
+        }
         g_ptrSystem->GetJSONWriter().FlushWrites(true);
 
         // Give the device a few seconds to finish the requested writes - this also gives AsyncWebServer

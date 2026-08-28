@@ -614,6 +614,26 @@ textarea {
   padding: 0 16px;
 }
 
+/* Topology section: hide fields that belong to the inactive layout. The toggling is driven by
+   a class on .settings-section-topology (.is-matrix vs .is-individual-strips) that JS swaps
+   whenever the matrixLayout setting changes, so the per-strip length fields vanish as soon
+   as the user picks "Matrix" and reappear when they pick "Individual strips". The layout
+   selector itself and the serpentine flag are kept always visible (serpentine has no effect
+   in individual-strip mode but it's harmless and avoids confusing the user by hiding it). */
+.settings-section-topology .setting-row[data-layout-for="matrix"],
+.settings-section-topology .setting-row[data-layout-for="individualStrips"] {
+  display: none;
+}
+.settings-section-topology.is-matrix .setting-row[data-layout-for="matrix"],
+.settings-section-topology.is-individual-strips .setting-row[data-layout-for="individualStrips"] {
+  display: grid;
+}
+.settings-section-topology.is-matrix .setting-row[data-layout-for="matrix"].stacked,
+.settings-section-topology.is-individual-strips .setting-row[data-layout-for="individualStrips"].stacked {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
 .setting-row {
   display: grid;
   grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.1fr);

@@ -25,6 +25,7 @@
 #include "audioservice.h"
 #include "deviceconfig.h"
 #include "effectmanager.h"
+#include "jsonserializer.h"
 #include "ledstripeffect.h"
 #include "systemcontainer.h"
 
@@ -345,6 +346,54 @@ SuccessResultWithMessage CWebServer::SetSettingsIfPresent(AsyncWebServerRequest 
     runtimeConfigChanged = PushPostParamIfPresent<size_t>(pRequest, DeviceConfig::MatrixWidthTag, SET_VALUE(runtimeConfig.topology.width = value)) || runtimeConfigChanged;
     runtimeConfigChanged = PushPostParamIfPresent<size_t>(pRequest, DeviceConfig::MatrixHeightTag, SET_VALUE(runtimeConfig.topology.height = value)) || runtimeConfigChanged;
     runtimeConfigChanged = PushPostParamIfPresent<bool>(pRequest, DeviceConfig::MatrixSerpentineTag, SET_VALUE(runtimeConfig.topology.serpentine = value)) || runtimeConfigChanged;
+
+    if (pRequest->hasParam(DeviceConfig::MatrixLayoutTag, true, false))
+    {
+        const auto layoutName = pRequest->getParam(DeviceConfig::MatrixLayoutTag, true, false)->value();
+        if (layoutName == "individualStrips" || layoutName == "individual")
+            runtimeConfig.topology.layout = DeviceConfig::LayoutType::IndividualStrips;
+        else
+            runtimeConfig.topology.layout = DeviceConfig::LayoutType::Matrix;
+        runtimeConfigChanged = true;
+    }
+
+    // Per-strip length fields. One legacy form field per channel (matrixStripLength0, ...,
+    // matrixStripLengthN) plus a unified array form (matrixStripLengths). Both are honored; the
+    // array form wins if both are present.
+    if (pRequest->hasParam(DeviceConfig::MatrixStripLengthsTag, true, false))
+    {
+        const auto raw = pRequest->getParam(DeviceConfig::MatrixStripLengthsTag, true, false)->value();
+        auto jsonDoc = CreateJsonDocument();
+        if (deserializeJson(jsonDoc, raw) == DeserializationError::Ok && jsonDoc.is<JsonArrayConst>())
+        {
+            auto array = jsonDoc.as<JsonArrayConst>();
+            for (size_t i = 0; i < runtimeConfig.topology.stripLengths.size() && i < array.size(); ++i)
+            {
+                if (array[i].is<int>())
+                {
+                    const int requested = array[i].as<int>();
+                    if (requested > 0)
+                        runtimeConfig.topology.stripLengths[i] = static_cast<uint16_t>(requested);
+                }
+            }
+        }
+        runtimeConfigChanged = true;
+    }
+    else
+    {
+        for (size_t i = 0; i < runtimeConfig.topology.stripLengths.size(); ++i)
+        {
+            const String tag = String(DeviceConfig::MatrixStripLength0Tag) + String(static_cast<unsigned>(i));
+            if (pRequest->hasParam(tag, true, false))
+            {
+                const int requested = pRequest->getParam(tag, true, false)->value().toInt();
+                if (requested > 0)
+                    runtimeConfig.topology.stripLengths[i] = static_cast<uint16_t>(requested);
+                runtimeConfigChanged = true;
+            }
+        }
+    }
+
     runtimeConfigChanged = PushPostParamIfPresent<size_t>(pRequest, DeviceConfig::WS281xChannelCountTag, SET_VALUE(runtimeConfig.outputs.channelCount = value)) || runtimeConfigChanged;
 
     if (pRequest->hasParam(DeviceConfig::OutputDriverTag, true, false))

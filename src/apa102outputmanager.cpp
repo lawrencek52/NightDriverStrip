@@ -236,9 +236,10 @@ SuccessResultWithMessage APA102OutputManager::ApplyConfig(const DeviceConfig& co
     if (requestedChannels > kMaxChannels)
         return { false, String("APA102 hardware-SPI driver supports at most ") + kMaxChannels + " channels" };
 
-    const size_t ledCount  = config.GetActiveLEDCount();
     const auto& dataPins   = config.GetAPA102DataPins();
     const auto& clockPins  = config.GetAPA102ClockPins();
+
+    size_t totalActiveLEDCount = 0;
 
     for (size_t i = 0; i < _channels.size(); ++i)
     {
@@ -249,17 +250,26 @@ SuccessResultWithMessage APA102OutputManager::ApplyConfig(const DeviceConfig& co
             continue;
         }
 
+        const size_t channelLEDCount = config.GetChannelLEDCount(i);
+        if (channelLEDCount == 0)
+        {
+            ReleaseChannel(i);
+            continue;
+        }
+
         auto& state = _channels[i];
-        if (!state.active || state.dataPin != dataPins[i] || state.clockPin != clockPins[i] || state.ledCount != ledCount)
+        if (!state.active || state.dataPin != dataPins[i] || state.clockPin != clockPins[i] || state.ledCount != channelLEDCount)
         {
             String errorMessage;
-            if (!ConfigureChannel(i, dataPins[i], clockPins[i], ledCount, &errorMessage))
+            if (!ConfigureChannel(i, dataPins[i], clockPins[i], channelLEDCount, &errorMessage))
                 return { false, errorMessage };
         }
+
+        totalActiveLEDCount += channelLEDCount;
     }
 
     _activeChannelCount = requestedChannels;
-    _activeLEDCount     = ledCount;
+    _activeLEDCount     = totalActiveLEDCount;
     _colorOrder         = config.GetWS281xColorOrder();
 
     LogRuntimeAPA102Configuration(config, devices, "apply");
@@ -282,7 +292,6 @@ void APA102OutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
     if (_activeChannelCount == 0 || _activeLEDCount == 0)
         return;
 
-    const size_t pixelsToShow = std::min(static_cast<size_t>(pixelsDrawn), _activeLEDCount);
     const auto showStartMicros = micros();
 
     for (size_t channelIndex = 0; channelIndex < _activeChannelCount && channelIndex < devices.size(); ++channelIndex)
@@ -293,12 +302,13 @@ void APA102OutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
 
         auto& device = devices[channelIndex];
         const size_t ledCount = std::min(state.ledCount, device->GetLEDCount());
+        const size_t channelPixelsToShow = std::min(static_cast<size_t>(pixelsDrawn), ledCount);
         const auto indices = PixelFormatHelpers::IndicesFor(_colorOrder);
 
         uint8_t* p = state.buffer + kStartFrameBytes;
         for (size_t i = 0; i < ledCount; ++i)
         {
-            CRGB color = (i < pixelsToShow) ? device->leds[i] : CRGB::Black;
+            CRGB color = (i < channelPixelsToShow) ? device->leds[i] : CRGB::Black;
             uint8_t wire[3] = {};
             wire[indices.rIdx] = PixelFormatHelpers::Scale(color.r, brightness, fader);
             wire[indices.gIdx] = PixelFormatHelpers::Scale(color.g, brightness, fader);

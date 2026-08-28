@@ -95,7 +95,9 @@
 
 // Set to 1 to enable the 44-Key Remote (White remote with DIY keys)
 // Set to 0 to enable the 24-Key Remote (Black/Color remote)
-#define REMOTE_KEY44 0
+#ifndef REMOTE_KEY44
+    #define REMOTE_KEY44 0
+#endif
 
 #if !REMOTE_KEY44
 // 24-Key Remote Definitions
@@ -205,6 +207,7 @@ static const RemoteColorCode RemoteColorCodes[] =
 // Map required keys for logic compatibility
 #define IR_FADE   IR_FADE3
 #define IR_SMOOTH IR_AUTO   // Map Smooth to Auto
+#define IR_STROBE IR_DIY1   // Map Strobe to DIY1
 
 static const RemoteColorCode RemoteColorCodes[] =
 {
@@ -559,14 +562,59 @@ public:
         rmt_item32_t* items = (rmt_item32_t*)xRingbufferReceive(_ringbuf, &size, 0);
         if (items)
         {
+            // DIAG: count successful ringbuffer reads. Each non-NULL
+            // return = one completed NEC frame worth of symbols.
+            // Stops incrementing -> RMT hardware isn't delivering events.
+            // Keeps incrementing but no "Remote:" line -> parser rejects
+            // the frame (timing/tolerance, not hardware).
+            static int  s_rbHitCount = 0;
+            const size_t symbolCount = size / sizeof(rmt_item32_t);
+            Serial.printf("[IR-DIAG] ringbuffer frame #%d symbols=%u bytes=%u\n",
+                          ++s_rbHitCount,
+                          (unsigned)symbolCount,
+                          (unsigned)size);
+
+            // DIAG: dump raw durations of the first few symbols. RMT
+            // captures each half-symbol as (level, duration) with the
+            // bit layout { duration0:15, level0:1, duration1:15, level1:1 }
+            // matching rmt_item32_t's anonymous union. Decoding via .val
+            // avoids any anonymous-union access issues with -Wpedantic.
+            // A real NEC frame starts with lvl=0 dur=~9000us, lvl=1
+            // dur=~4500us. 1-symbol noise frames look completely different
+            // (random short or ~20000us durations, dominated by idle).
+            const rmt_item32_t* raw = reinterpret_cast<const rmt_item32_t*>(items);
+            const size_t dumpCount = (symbolCount < 4) ? symbolCount : 4;
+            for (size_t i = 0; i < dumpCount; ++i)
+            {
+                const uint32_t rawVal = raw[i].val;
+                const uint32_t d0     = rawVal & 0x7FFF;
+                const uint32_t l0     = (rawVal >> 15) & 0x1;
+                const uint32_t d1     = (rawVal >> 16) & 0x7FFF;
+                const uint32_t l1     = (rawVal >> 31) & 0x1;
+                Serial.printf("[IR-DIAG]   sym%u: lvl=%u d=%5uus  lvl=%u d=%5uus%s\n",
+                              (unsigned)i, (unsigned)l0, (unsigned)d0,
+                              (unsigned)l1, (unsigned)d1,
+                              (d0 == 0 && d1 == 0) ? "  (both zero - idle clamped)" : "");
+            }
+
             // rmt_item32_t and IrSymbol share the same 32-bit bitfield
             // layout (verified by static_assert on sizeof). Reinterpret
             // is safe and lets the shared parser stay driver-agnostic.
             static_assert(sizeof(rmt_item32_t) == sizeof(IrSymbol),
                           "rmt_item32_t and IrSymbol must share size");
             const bool success = ParseNecFrame(reinterpret_cast<const IrSymbol*>(items),
-                                               size / sizeof(rmt_item32_t),
+                                               symbolCount,
                                                code, isRepeat);
+
+            // DIAG: report parser outcome separately so we can tell
+            // "frame arrived, parser rejected" from "frame arrived, parsed".
+            if (!success)
+                Serial.printf("[IR-DIAG] ParseNecFrame FAILED for frame #%d (symbols=%u)\n",
+                              s_rbHitCount, (unsigned)symbolCount);
+            else
+                Serial.printf("[IR-DIAG] ParseNecFrame OK code=0x%08lX repeat=%d\n",
+                              (unsigned long)code, (int)isRepeat);
+
             vRingbufferReturnItem(_ringbuf, items);
             return success;
         }
@@ -748,6 +796,19 @@ private:
         auto*      self   = static_cast<DriverNgRemoteControlImpl*>(userCtx);
         BaseType_t higher = pdFALSE;
 
+        // DIAG: confirm the ISR is firing on every press and how many
+        // symbols each frame contains. If s_isrCount stops incrementing
+        // after the first press, the RMT channel is dead and we have a
+        // rearm-state bug. If it keeps incrementing but no "Remote:"
+        // line appears in the terminal, the parser is rejecting the frame
+        // (timing/tolerance, not a hardware issue).
+        static int s_isrCount = 0;
+        Serial.printf("[IR-DIAG] on_recv_done #%d symbols=%u edata=%p symbols_ptr=%p\n",
+                      ++s_isrCount,
+                      (unsigned)(edata ? edata->num_symbols : 0),
+                      (void*)edata,
+                      edata ? (void*)edata->received_symbols : (void*)nullptr);
+
         if (self->_frameQueue && edata && edata->received_symbols)
         {
             IrFrame      frame;
@@ -821,6 +882,7 @@ RemoteControl::~RemoteControl() { Stop(); }
 bool RemoteControl::begin() {
     debugW("Native Remote Control Decoding Started (%s)",
            _pImpl ? _pImpl->DriverName() : "no impl");
+    debugW("IR_REMOTE_PIN compile-time value = %d", (int)IR_REMOTE_PIN);
     return _pImpl ? _pImpl->begin() : false;
 }
 
@@ -922,7 +984,7 @@ void RemoteControl::handle()
 
     if (IR_ON == result)
     {
-        debugI("Remote: Power ON");
+        debugI("Remote: Power ON (0x%08lX)", (unsigned long)result);
         effectManager.ClearRemoteColor();
         effectManager.SetInterval(0);
         effectManager.StartEffect();
@@ -931,7 +993,7 @@ void RemoteControl::handle()
     }
     else if (IR_OFF == result)
     {
-        debugI("Remote: Power OFF");
+        debugI("Remote: Power OFF (0x%08lX)", (unsigned long)result);
         #if USE_HUB75
             deviceConfig.SetBrightness((int)deviceConfig.GetBrightness() - BRIGHTNESS_STEP);
         #else
@@ -944,7 +1006,7 @@ void RemoteControl::handle()
     }
     else if (IR_BPLUS == result)
     {
-        debugI("Remote: Bright/Speed +");
+        debugI("Remote: Bright/Speed + (0x%08lX)", (unsigned long)result);
         if (deviceConfig.RemoteEffectButtonsResetInterval())
             effectManager.SetInterval(DEFAULT_EFFECT_INTERVAL, true);
         if (deviceConfig.ApplyGlobalColors())
@@ -956,7 +1018,7 @@ void RemoteControl::handle()
     }
     else if (IR_BMINUS == result)
     {
-        debugI("Remote: Bright/Speed -");
+        debugI("Remote: Bright/Speed - (0x%08lX)", (unsigned long)result);
         if (deviceConfig.RemoteEffectButtonsResetInterval())
             effectManager.SetInterval(DEFAULT_EFFECT_INTERVAL, true);
         if (deviceConfig.ApplyGlobalColors())
@@ -968,23 +1030,23 @@ void RemoteControl::handle()
     }
     else if (IR_SMOOTH == result)
     {
-        debugI("Remote: Smooth");
+        debugI("Remote: Smooth (0x%08lX)", (unsigned long)result);
         effectManager.ClearRemoteColor();
         effectManager.SetInterval(EffectManager::csSmoothButtonSpeed);
     }
     else if (IR_STROBE == result)
     {
-        debugI("Remote: Strobe");
+        debugI("Remote: Strobe (0x%08lX)", (unsigned long)result);
         effectManager.NextPalette();
     }
     else if (IR_FLASH == result)
     {
-        debugI("Remote: Flash");
+        debugI("Remote: Flash (0x%08lX)", (unsigned long)result);
         effectManager.PreviousPalette();
     }
     else if (IR_FADE == result)
     {
-        debugI("Remote: Fade");
+        debugI("Remote: Fade (0x%08lX)", (unsigned long)result);
         effectManager.ShowVU( !effectManager.IsVUVisible() );
     }
 
@@ -1011,8 +1073,8 @@ void RemoteControl::handle()
         }
     }
 
-    // Log unknown codes
-    debugD("Remote: Unknown Code 0x%08lX", (unsigned long)result);
+    // Log unknown codes (no symbolic name match in the action or color tables)
+    debugI("Remote: Unknown (0x%08lX)", (unsigned long)result);
 }
 
 #endif

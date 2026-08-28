@@ -335,8 +335,25 @@ SuccessResultWithMessage SystemContainer::ApplyRuntimeConfiguration()
         {
             // Reconfiguring the already-owned GFX objects keeps the rest of the renderer stable while
             // still letting the active strip layout, channel count, and pins move inside build limits.
-            for (auto& device : *_ptrDevices)
-                device->ConfigureTopology(config.GetMatrixWidth(), config.GetMatrixHeight(), config.IsMatrixSerpentine());
+            // For matrix layouts every device is sized to width*height. For individual-strip layouts
+            // each device is sized to its own per-strip length with height=1 (no serpentine).
+            const bool individualStrips = config.GetLayout() == DeviceConfig::LayoutType::IndividualStrips;
+            const auto matrixWidth = config.GetMatrixWidth();
+            const auto matrixHeight = config.GetMatrixHeight();
+            const auto serpentine = config.IsMatrixSerpentine();
+            for (size_t i = 0; i < _ptrDevices->size(); ++i)
+            {
+                auto& device = (*_ptrDevices)[i];
+                if (individualStrips)
+                {
+                    const uint16_t stripLength = config.GetChannelLEDCount(i);
+                    device->ConfigureTopology(stripLength, 1, false);
+                }
+                else
+                {
+                    device->ConfigureTopology(matrixWidth, matrixHeight, serpentine);
+                }
+            }
         }
 
         if (_ptrBufferManagers && _ptrDevices)

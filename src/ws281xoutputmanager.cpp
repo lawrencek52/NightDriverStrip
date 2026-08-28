@@ -559,12 +559,14 @@ SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& co
         return { false, "recompile needed" };
 
     const size_t channelCount = std::min(config.GetChannelCount(), devices.size());
-    const size_t ledCount = config.GetActiveLEDCount();
     const auto& pins = config.GetWS281xPins();
 
     // Walk the full compile-time channel array every apply:
     // - active entries are recreated only if pin/length/install state changed
     // - inactive entries are explicitly released so old GPIO bindings disappear
+    // Per-channel LED counts come from DeviceConfig::GetChannelLEDCount(channel): matrix layouts
+    // hand every channel width*height, individual-strip layouts hand each its own length.
+    size_t totalActiveLEDCount = 0;
 
     for (size_t i = 0; i < _channels.size(); ++i)
     {
@@ -575,17 +577,26 @@ SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& co
             continue;
         }
 
-        auto& state = _channels[i];
-        if (!state.active || !state.installed || state.pin != pins[i] || state.ledCount != ledCount)
+        const size_t channelLEDCount = config.GetChannelLEDCount(i);
+        if (channelLEDCount == 0)
         {
-            auto [channelRecreated, recreateError] = RecreateChannel(i, pins[i], ledCount);
+            ReleaseChannel(i);
+            continue;
+        }
+
+        auto& state = _channels[i];
+        if (!state.active || !state.installed || state.pin != pins[i] || state.ledCount != channelLEDCount)
+        {
+            auto [channelRecreated, recreateError] = RecreateChannel(i, pins[i], channelLEDCount);
             if (!channelRecreated)
                 return { false, recreateError };
         }
+
+        totalActiveLEDCount += channelLEDCount;
     }
 
     _activeChannelCount = channelCount;
-    _activeLEDCount = ledCount;
+    _activeLEDCount = totalActiveLEDCount;
     _colorOrder = config.GetWS281xColorOrder();
 
     LogRuntimeWS281xConfiguration(config, devices, "apply");
@@ -602,8 +613,6 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
     if (_activeChannelCount == 0 || _activeLEDCount == 0)
         return;
 
-    const size_t pixelsToShow = std::min(static_cast<size_t>(pixelsDrawn), _activeLEDCount);
-
     // First build packed output bytes for every active channel.  The GFX layer
     // owns CRGB frame buffers; the runtime transport owns these temporary-once-
     // per-channel packed bytes that match the selected color order.
@@ -616,6 +625,11 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
 
         const auto& device = devices[channelIndex];
         auto* output = state.outputBytes.get();
+
+        // Each channel uses its own LED count, not the cross-channel total. For matrix layouts
+        // this matches width*height, so behaviour is identical to the pre-individual-strips path.
+        const size_t channelLEDCount = state.ledCount;
+        const size_t channelPixelsToShow = std::min(static_cast<size_t>(pixelsDrawn), channelLEDCount);
 
         // Delegate to the chip-specific format. Passes the optional whites
         // plane (nullptr for plain WS2812 builds; populated by setPixelCCT /
@@ -649,8 +663,8 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
         _format->Pack(output,
                       device->leds,
                       device->whites,                 // may be nullptr
-                      _activeLEDCount,
-                      pixelsToShow,
+                      channelLEDCount,
+                      channelPixelsToShow,
                       brightness, fader,
                       _colorOrder,
                       kDefaultCctKelvin,
@@ -671,7 +685,7 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
         if (!state.active || !state.installed || !state.outputBytes)
             continue;
 
-        _transport->TransmitChannel(channelIndex, state.outputBytes.get(), state.byteCount, state.pin, _activeLEDCount);
+        _transport->TransmitChannel(channelIndex, state.outputBytes.get(), state.byteCount, state.pin, state.ledCount);
     }
 
     // The transmit wait is also where live reconfiguration pressure tends to
@@ -683,7 +697,7 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
         if (!state.active || !state.installed)
             continue;
 
-        _transport->WaitForChannel(channelIndex, state.pin, _activeLEDCount);
+        _transport->WaitForChannel(channelIndex, state.pin, state.ledCount);
     }
 
     const auto showElapsedMicros = micros() - showStartMicros;

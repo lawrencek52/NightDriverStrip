@@ -46,6 +46,46 @@ SuccessResultWithMessage DeviceConfig::ValidateTopology(uint16_t width, uint16_t
     return { true, "" };
 }
 
+SuccessResultWithMessage DeviceConfig::ValidateStripLengths(const std::array<uint16_t, NUM_CHANNELS>& lengths,
+                                                            size_t channelCount) const
+{
+    // HUB75 doesn't run per-strip layouts at all; the caller should not reach this branch, but
+    // defend against it so an accidentally-misconfigured build doesn't try to allocate a layout
+    // the panel can't display.
+    if (IsHub75Build())
+        return { false, DeviceConfigInternal::RecompileNeededMessage() };
+
+    if (channelCount == 0)
+        return { false, "channel count must be greater than zero" };
+
+    if (channelCount > GetCompiledChannelCount())
+        return { false, DeviceConfigInternal::RecompileNeededMessage() };
+
+    // Each channel gets its own PSRAM GFX buffer and its own DMA byte buffer, so the limit is
+    // PER STRIP rather than a shared total. The compile-time NUM_LEDS is the per-strip default
+    // and a reasonable upper bound (the uint16_t field can technically hold 65535, but anything
+    // much beyond NUM_LEDS would chew through memory without a recompile to bump the buffer).
+    const uint16_t perStripMax = GetCompiledLEDCount();
+    for (size_t i = 0; i < channelCount; ++i)
+    {
+        if (lengths[i] == 0)
+            return { false, String("Strip ") + (i + 1) + " must have at least one LED" };
+
+        if (lengths[i] > perStripMax)
+        {
+            return {
+                false,
+                String("Strip ") + (i + 1) + " has " + lengths[i]
+                    + " LEDs, but this firmware was compiled for a maximum of "
+                    + static_cast<unsigned long>(perStripMax)
+                    + " LEDs per strip. Lower this strip or flash a build compiled for more LEDs per strip."
+            };
+        }
+    }
+
+    return { true, "" };
+}
+
 SuccessResultWithMessage DeviceConfig::ValidateOutputDriver(OutputDriver driver) const
 {
     if (driver != GetCompiledOutputDriver())
@@ -130,9 +170,21 @@ SuccessResultWithMessage DeviceConfig::ValidateRuntimeConfig(const RuntimeConfig
     if (!driverValid)
         return { false, driverMessage };
 
-    auto [topologyValid, topologyMessage] = ValidateTopology(config.topology.width, config.topology.height, config.topology.serpentine);
-    if (!topologyValid)
-        return { false, topologyMessage };
+    // Strip-lengths only matter for the individual-strip layout. The matrix path keeps validating
+    // the existing width/height/serpentine triple so HUB75 builds (which are always Matrix) are
+    // unaffected.
+    if (config.topology.layout == LayoutType::IndividualStrips && !IsHub75Build())
+    {
+        auto [lengthsValid, lengthsMessage] = ValidateStripLengths(config.topology.stripLengths, config.outputs.channelCount);
+        if (!lengthsValid)
+            return { false, lengthsMessage };
+    }
+    else
+    {
+        auto [topologyValid, topologyMessage] = ValidateTopology(config.topology.width, config.topology.height, config.topology.serpentine);
+        if (!topologyValid)
+            return { false, topologyMessage };
+    }
 
     auto [stripValid, stripMessage] = ValidateStripSettings(config.outputs.channelCount,
                                                             config.outputs.outputPins,

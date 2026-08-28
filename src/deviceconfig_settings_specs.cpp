@@ -21,10 +21,14 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         // Build the table in one allocation. On no-PSRAM boards this metadata
         // is created after the HUB75 DMA buffers, so geometric vector growth
         // can temporarily require both old and new contiguous blocks.
-        constexpr size_t kFixedSettingSpecCapacity = 26;
+        constexpr size_t kFixedSettingSpecCapacity = 28;
         const auto compiledChannelCount = GetCompiledChannelCount();
+        // Each compiled channel contributes a per-channel pin spec (two on APA102) plus a
+        // per-channel strip-length spec, so budget headroom for both.
         const size_t outputSettingSpecCount = compiledChannelCount
         #if USE_APA102
+            * 3
+        #else
             * 2
         #endif
         ;
@@ -236,26 +240,45 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         }));
 
         // ---- topology section ----------------------------------------------
+        // Layout selector: matrix (one width x height grid mirrored on every channel) versus
+        // individual strips (each channel carries its own LED count). The choice drives whether
+        // the matrix width/height/serpentine fields or the per-strip length fields are honored.
+        // HUB75 builds pin this to "matrix" via the schema's supportedLayouts list.
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = MatrixLayoutTag,
+            .FriendlyName = "Layout",
+            .Description  = "How the channels are laid out. Matrix means every channel carries the same width x height pixel grid. "
+                            "Individual strips means each channel is its own strip with its own LED count, set in the per-strip length fields below.",
+            .Type         = SettingSpec::SettingType::String,
+            .Section      = kSectionTopology,
+            .Priority     = 0,
+            .ApiPath      = "topology.layout",
+            .Widget       = SettingSpec::WidgetKind::Select,
+            .Options      = SettingSpec::OptionsSource::SchemaPath,
+            .OptionValues = {"matrix", "individualStrips"},
+            .OptionLabels = {"Matrix", "Individual strips"},
+            .OptionsSchemaPath = "topology.supportedLayouts"
+        }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name         = MatrixWidthTag,
             .FriendlyName = "Matrix width",
-            .Description  = "Active matrix width. WS281x builds validate this by total LED capacity, so width * height must stay within the compiled LED budget.",
-            .Type         = SettingSpec::SettingType::PositiveBigInteger,
-            .MinimumValue = 1.0,
-            .MaximumValue = (double)GetCompiledLEDCount(),
-            .Section      = kSectionTopology,
-            .Priority     = 0,
-            .ApiPath      = "topology.width"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name         = MatrixHeightTag,
-            .FriendlyName = "Matrix height",
-            .Description  = "Active matrix height. WS281x builds validate this by total LED capacity, so width * height must stay within the compiled LED budget.",
+            .Description  = "Active matrix width. Used when the layout is set to Matrix; ignored for individual strips. WS281x builds validate this by total LED capacity, so width * height must stay within the compiled LED budget.",
             .Type         = SettingSpec::SettingType::PositiveBigInteger,
             .MinimumValue = 1.0,
             .MaximumValue = (double)GetCompiledLEDCount(),
             .Section      = kSectionTopology,
             .Priority     = 1,
+            .ApiPath      = "topology.width"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = MatrixHeightTag,
+            .FriendlyName = "Matrix height",
+            .Description  = "Active matrix height. Used when the layout is set to Matrix; ignored for individual strips. WS281x builds validate this by total LED capacity, so width * height must stay within the compiled LED budget.",
+            .Type         = SettingSpec::SettingType::PositiveBigInteger,
+            .MinimumValue = 1.0,
+            .MaximumValue = (double)GetCompiledLEDCount(),
+            .Section      = kSectionTopology,
+            .Priority     = 2,
             .ApiPath      = "topology.height"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
@@ -264,9 +287,56 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Description  = "Controls the logical XY mapping for strip-based matrices. HUB75 ignores this because its panel mapping is build-defined.",
             .Type         = SettingSpec::SettingType::Boolean,
             .Section      = kSectionTopology,
-            .Priority     = 2,
+            .Priority     = 3,
             .ApiPath      = "topology.serpentine"
         }));
+
+        // Per-strip length specs. We emit one spec per compiled channel so the UI can render a
+        // numbered input for every GPIO pin even if not all channels are active. The web form
+        // flags these as conditional on the layout being "individualStrips" and the channel
+        // being below the active channel count.
+        //
+        // Implementation note: the per-strip labels are built once into std::string instances
+        // owned by a small member vector rather than going through the Arduino String +
+        // emplace_back dance. The Arduino String SSO buffer can hold onto stack garbage when
+        // the constructor default-initializes the union before init() runs, and that garbage
+        // would leak through c_str() if the SSO/heap flag ever ended up wrong; using
+        // std::string here avoids that whole class of bug because std::string never claims a
+        // value unless copy-constructed from real data. The member vector (instead of a
+        // local) keeps the std::string instances alive for the lifetime of DeviceConfig so
+        // the c_str() pointers stored in the SettingSpec objects remain valid.
+        if (_stripLengthStrings.size() < static_cast<size_t>(compiledChannelCount) * 4)
+        {
+            _stripLengthStrings.resize(compiledChannelCount * 4);
+        }
+
+        for (size_t i = 0; i < compiledChannelCount; ++i)
+        {
+            char buf[160];
+            snprintf(buf, sizeof(buf), "%s%zu", MatrixStripLength0Tag, i);
+            _stripLengthStrings[i * 4 + 0] = buf;
+            snprintf(buf, sizeof(buf), "Strip %zu LEDs", i + 1);
+            _stripLengthStrings[i * 4 + 1] = buf;
+            snprintf(buf, sizeof(buf), "Number of LEDs on strip %zu. Used when the layout is set to Individual strips; ignored otherwise.", i + 1);
+            _stripLengthStrings[i * 4 + 2] = buf;
+            snprintf(buf, sizeof(buf), "topology.stripLengths[%zu]", i);
+            _stripLengthStrings[i * 4 + 3] = buf;
+        }
+
+        for (size_t i = 0; i < compiledChannelCount; ++i)
+        {
+            settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                .Name         = _stripLengthStrings[i * 4 + 0].c_str(),
+                .FriendlyName = _stripLengthStrings[i * 4 + 1].c_str(),
+                .Description  = _stripLengthStrings[i * 4 + 2].c_str(),
+                .Type         = SettingSpec::SettingType::PositiveBigInteger,
+                .MinimumValue = 1.0,
+                .MaximumValue = (double)GetCompiledLEDCount(),
+                .Section      = kSectionTopology,
+                .Priority     = 4 + static_cast<int>(i),
+                .ApiPath      = _stripLengthStrings[i * 4 + 3].c_str()
+            }));
+        }
 
         // ---- output section -------------------------------------------------
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
@@ -330,11 +400,18 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             #endif
         }));
 
+        // pinSpecStrings backs the const char* pointers stored in each SettingSpec below.
+        // Both the per-channel pin loop and the per-channel strip-length loop below push
+        // strings onto this vector and hold onto c_str() pointers from those strings. If the
+        // vector reallocates between those emplace_back calls the earlier c_str() pointers
+        // dangle and the spec JSON ends up serializing whatever the freed memory contains
+        // (in practice, control characters that JSON.parse then rejects). Budget room for
+        // both loops upfront so reallocation never happens mid-iteration.
         constexpr size_t kPinStringsPerChannel =
         #if USE_APA102
-            8;
+            12; // 8 for data+clock pin spec, 4 for strip-length spec
         #else
-            4;
+            8;  // 4 for pin spec, 4 for strip-length spec
         #endif
         pinSpecStrings.reserve(compiledChannelCount * kPinStringsPerChannel);
         const auto stableCStr = [](const String& s) { return s.c_str(); };

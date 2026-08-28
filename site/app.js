@@ -438,7 +438,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     els.summaryIntervalRemaining.textContent = pinned
       ? (intervalScale.offLabel || "Off")
       : `${Math.max(0, Math.ceil(remainingMs / intervalScale.divisor))} ${intervalScale.unitLabel}`.trim();
-    els.summaryTopology.textContent = `${staticStats.ACTIVE_MATRIX_WIDTH}x${staticStats.ACTIVE_MATRIX_HEIGHT} / ${staticStats.ACTIVE_NUM_LEDS} leds`;
+    els.summaryTopology.textContent = formatTopologySummary(staticStats);
     els.summaryDriver.textContent = `${staticStats.ACTIVE_OUTPUT_DRIVER} / ${staticStats.ACTIVE_NUM_CHANNELS} ch`;
     els.summaryLedFps.textContent = formatNumber(dynamicStats.LED_FPS);
     els.summaryAudioFps.textContent = `Audio ${formatNumber(dynamicStats.AUDIO_FPS)} / Serial ${formatNumber(dynamicStats.SERIAL_FPS)}`;
@@ -451,6 +451,22 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     els.effectsMeta.textContent = effects.channelsIndependent
       ? `${effectList.length} effects / per-strip`
       : `${effectList.length} effects / active ${currentIndex}`;
+  }
+
+  // Compact human-readable topology summary for the home-page card. Matrix layouts show "WxH / N
+  // leds", individual-strip layouts show "N strips / M leds". Falls back to the matrix form
+  // when no per-strip lengths have been published yet (older firmware).
+  function formatTopologySummary(staticStats) {
+    if (!staticStats) {
+      return "--";
+    }
+    const totalLeds = Number(staticStats.ACTIVE_NUM_LEDS || 0);
+    if (staticStats.ACTIVE_LAYOUT === "individualStrips" && Array.isArray(staticStats.ACTIVE_STRIP_LENGTHS) && staticStats.ACTIVE_STRIP_LENGTHS.length > 0) {
+      const lengths = staticStats.ACTIVE_STRIP_LENGTHS.filter((value) => Number(value) > 0);
+      const stripCount = lengths.length || Number(staticStats.ACTIVE_NUM_CHANNELS || 0);
+      return `${stripCount} strips / ${totalLeds} leds`;
+    }
+    return `${staticStats.ACTIVE_MATRIX_WIDTH}x${staticStats.ACTIVE_MATRIX_HEIGHT} / ${totalLeds} leds`;
   }
 
   function syncEffectIntervalInput(serverIntervalMs) {
@@ -799,6 +815,12 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
       const sectionNode = document.createElement("section");
       sectionNode.className = "settings-section";
+      // The topology section needs a layout-aware wrapper so we can re-evaluate which fields
+      // belong to "matrix" vs. "individual strips" on each render. Other sections keep the
+      // generic card styling.
+      if (section.key === "topology") {
+        sectionNode.classList.add("settings-section-topology");
+      }
 
       const headerNode = document.createElement("header");
       headerNode.className = "settings-section-header";
@@ -819,13 +841,78 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       bodyNode.className = "settings-section-body";
       section.specs.forEach((spec) => {
         const currentValue = getCurrentDeviceSettingValue(spec);
-        bodyNode.appendChild(buildSettingField(spec, currentValue, state.deviceDraft, state.deviceErrors, false));
+        const fieldNode = buildSettingField(spec, currentValue, state.deviceDraft, state.deviceErrors, false);
+        // Mark topology fields with their layout precondition so the conditional toggle
+        // (CSS class on the section) can hide/show them after rendering.
+        const conditionalLayout = getTopologyConditionalLayout(spec);
+        if (conditionalLayout) {
+          fieldNode.dataset.layoutFor = conditionalLayout;
+        }
+        bodyNode.appendChild(fieldNode);
       });
       sectionNode.appendChild(bodyNode);
       fragment.appendChild(sectionNode);
     });
 
     els.deviceSettingsForm.replaceChildren(fragment);
+    syncTopologyLayoutVisibility();
+    attachMatrixLayoutRerender();
+  }
+
+  // The Layout select needs to redraw the topology section on change so its sibling fields
+  // (matrix width/height vs. per-strip lengths) hide or show immediately. setDraftValue keeps
+  // the value, then a delegated change listener on the device form runs a full re-render.
+  let _matrixLayoutRerenderWired = false;
+  function attachMatrixLayoutRerender() {
+    if (_matrixLayoutRerenderWired || !els.deviceSettingsForm) {
+      return;
+    }
+    els.deviceSettingsForm.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!target || target.tagName !== "SELECT" || !target.closest(".settings-section-topology")) {
+        return;
+      }
+      // Only the layout select carries the two option values we care about; anything else in
+      // the topology section should just update the draft without redrawing.
+      const options = Array.from(target.options || []).map((option) => option.value);
+      if (!options.includes("matrix") || !options.includes("individualStrips")) {
+        return;
+      }
+      renderSettingsForm();
+    });
+    _matrixLayoutRerenderWired = true;
+  }
+
+  // Returns "matrix" or "individualStrips" if this topology spec only makes sense when the
+  // active layout is in the matching mode, otherwise null. Used to attach data-layout-for to
+  // each field so the visibility toggle can flip a CSS class on the topology section.
+  function getTopologyConditionalLayout(spec) {
+    if (!spec || !spec.name) {
+      return null;
+    }
+    if (spec.name === "matrixWidth" || spec.name === "matrixHeight" || spec.name === "matrixSerpentine") {
+      return "matrix";
+    }
+    if (typeof spec.name === "string" && spec.name.startsWith("matrixStripLength") && spec.name !== "matrixStripLengths") {
+      return "individualStrips";
+    }
+    return null;
+  }
+
+  // Toggle the .is-matrix / .is-individual-strips classes on the topology section based on the
+  // current value of the matrixLayout setting (draft wins over saved). The CSS uses these to
+  // hide fields whose data-layout-for doesn't match.
+  function syncTopologyLayoutVisibility() {
+    const sectionNode = els.deviceSettingsForm.querySelector(".settings-section-topology");
+    if (!sectionNode) {
+      return;
+    }
+
+    const layoutValue = getDraftOrCurrentDeviceSetting("matrixLayout");
+    const mode = (layoutValue === "individualStrips" || layoutValue === "individual") ? "individualStrips" : "matrix";
+
+    sectionNode.classList.toggle("is-matrix", mode === "matrix");
+    sectionNode.classList.toggle("is-individual-strips", mode === "individualStrips");
   }
 
   // Section catalog comes from /api/v1/settings/schema (root.sections). The UI
@@ -1546,6 +1633,44 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       return;
     }
 
+    const layout = String(getDraftOrCurrentDeviceSetting("matrixLayout") || "matrix");
+    const individualStrips = layout === "individualStrips" || layout === "individual";
+
+    if (individualStrips) {
+      // Each channel gets its own GFX frame buffer and its own DMA byte buffer, so the
+      // constraint is PER STRIP, not the sum across strips. The per-strip length field
+      // names are matrixStripLength0 .. matrixStripLengthN-1. We attach the error to the
+      // offending strip's field rather than to the layout field, so the user sees exactly
+      // which strip needs to be brought down.
+      const specs = getOrderedDeviceSettingSpecs();
+      let firstOffender = null;
+      specs.forEach((spec) => {
+        if (typeof spec.name !== "string" || !spec.name.startsWith("matrixStripLength")) {
+          return;
+        }
+        if (spec.name === "matrixStripLengths") {
+          return;
+        }
+        const value = Number(getDraftOrCurrentDeviceSetting(spec.name));
+        if (firstOffender || !Number.isFinite(value) || value <= 0) {
+          return;
+        }
+        if (value > maxLeds)
+        {
+          firstOffender = {
+            name: spec.name,
+            friendlyName: spec.friendlyName || spec.name,
+            value
+          };
+        }
+      });
+      if (firstOffender) {
+        const message = `${firstOffender.friendlyName} has ${firstOffender.value} LEDs, but this firmware supports up to ${maxLeds} LEDs per strip. Lower this strip or flash a build compiled for more LEDs per strip.`;
+        errors.set(firstOffender.name, message);
+      }
+      return;
+    }
+
     const width = Number(getDraftOrCurrentDeviceSetting("matrixWidth"));
     const height = Number(getDraftOrCurrentDeviceSetting("matrixHeight"));
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
@@ -1711,16 +1836,24 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     }
 
     const cards = [];
-    cards.push(statCard("Output", [
+    const outputRows = [
       ["Compiled driver", staticStats.COMPILED_OUTPUT_DRIVER],
       ["Active driver", staticStats.ACTIVE_OUTPUT_DRIVER],
+      ["Layout", staticStats.ACTIVE_LAYOUT === "individualStrips" ? "Individual strips" : (staticStats.ACTIVE_LAYOUT || "matrix")],
       ["Compiled order", staticStats.COMPILED_WS281X_COLOR_ORDER || "--"],
-      ["Active order", staticStats.CONFIGURED_WS281X_COLOR_ORDER || "--"],
-      ["Configured", `${staticStats.CONFIGURED_MATRIX_WIDTH}x${staticStats.CONFIGURED_MATRIX_HEIGHT}`],
-      ["Active", `${staticStats.ACTIVE_MATRIX_WIDTH}x${staticStats.ACTIVE_MATRIX_HEIGHT}`],
-      ["LEDs", `${staticStats.ACTIVE_NUM_LEDS} / ${staticStats.COMPILED_NUM_LEDS}`],
-      ["Channels", `${staticStats.ACTIVE_NUM_CHANNELS} / ${staticStats.COMPILED_NUM_CHANNELS}`]
-    ]));
+      ["Active order", staticStats.CONFIGURED_WS281X_COLOR_ORDER || "--"]
+    ];
+    if (staticStats.ACTIVE_LAYOUT === "individualStrips" && Array.isArray(staticStats.ACTIVE_STRIP_LENGTHS) && staticStats.ACTIVE_STRIP_LENGTHS.length > 0) {
+      outputRows.push(["Strip lengths", staticStats.ACTIVE_STRIP_LENGTHS.join(", ")]);
+      const width = staticStats.ACTIVE_STRIP_LENGTHS.length > 0 ? Math.max.apply(null, staticStats.ACTIVE_STRIP_LENGTHS) : 1;
+      outputRows.push(["Active", `${width}x1`]);
+    } else {
+      outputRows.push(["Configured", `${staticStats.CONFIGURED_MATRIX_WIDTH}x${staticStats.CONFIGURED_MATRIX_HEIGHT}`]);
+      outputRows.push(["Active", `${staticStats.ACTIVE_MATRIX_WIDTH}x${staticStats.ACTIVE_MATRIX_HEIGHT}`]);
+    }
+    outputRows.push(["LEDs", `${staticStats.ACTIVE_NUM_LEDS} / ${staticStats.COMPILED_NUM_LEDS}`]);
+    outputRows.push(["Channels", `${staticStats.ACTIVE_NUM_CHANNELS} / ${staticStats.COMPILED_NUM_CHANNELS}`]);
+    cards.push(statCard("Output", outputRows));
 
     cards.push(statCard("Audio", [
       ["Mode", staticStats.AUDIO_INPUT_MODE],
