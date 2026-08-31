@@ -220,15 +220,20 @@ extern std::recursive_mutex g_effect_manager_mutex;
 // #define SOCKET_CORE             1
 // #define REMOTE_CORE             1
 
-// Keep drawing on Core 1 so the render workload remains isolated from audio.
+// Keep drawing on Core 1 alone. NET_CORE/SOCKET_CORE used to share Core 1 with
+// drawing, which let WiFi rx/tx (including the AsyncTCP task, see
+// CONFIG_ASYNC_TCP_RUNNING_CORE in platformio.ini) starve the RMT/SPI LED
+// output loop and cause visible flicker under network load. Both now run on
+// Core 0 with the ESP-IDF WiFi driver task, leaving Core 1 dedicated to the
+// render loop so the LED serial stream is never interrupted by network work.
 
 #define DRAWING_CORE            1
-#define NET_CORE                1
+#define NET_CORE                0
 #define AUDIO_CORE              0
 #define AUDIOSERIAL_CORE        1
 #define SCREEN_CORE             1
 #define DEBUG_CORE              1
-#define SOCKET_CORE             1
+#define SOCKET_CORE             0
 #define REMOTE_CORE             1
 #define JSONWRITER_CORE         0
 #define COLORDATA_CORE          0

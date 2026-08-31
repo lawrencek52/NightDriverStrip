@@ -175,6 +175,8 @@ class FireworksEffect : public EffectWithId<FireworksEffect>
         setAllOnAllChannels(0, 0, 0);
     }
 
+    bool RequiresAudio() const override { return true; }   // launches fireworks entirely from OnBeat()
+
     void OnBeat(const BeatInfo& beat) override
     {
         LEDStripEffect::OnBeat(beat);

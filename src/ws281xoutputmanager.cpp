@@ -27,6 +27,7 @@
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
 #include <esp_task_wdt.h>
+#include <soc/soc_caps.h>
 
 // Two RMT backends, picked at compile time. On IDF 4.x (Arduino-ESP32 2.x)
 // only the legacy driver/rmt.h API exists; on IDF 5.x driver_ng is the
@@ -304,15 +305,40 @@ namespace
         rmt_encoder_handle_t _encoders[NUM_CHANNELS] = {};
 
     public:
-        SuccessResultWithMessage ConfigureChannel(size_t channelIndex, gpio_num_t pin, size_t /*byteCount*/) override
+        SuccessResultWithMessage ConfigureChannel(size_t channelIndex, gpio_num_t pin, size_t byteCount) override
         {
             rmt_tx_channel_config_t channelConfig = {};
             channelConfig.gpio_num = pin;
             channelConfig.clk_src = RMT_CLK_SRC_DEFAULT;
             // 40 MHz / 25 ns ticks - matches legacy clock divider 2 from APB 80 MHz.
             channelConfig.resolution_hz = 40 * 1000 * 1000;
-            channelConfig.mem_block_symbols = 64;
             channelConfig.trans_queue_depth = 4;
+            // Default (0) lets the driver pick any of the low/medium levels (1-3); pin to the
+            // top of that range so other same-tier ISRs (e.g. I2S/PDM audio) can't win arbitration
+            // and delay the RMT kickoff.
+            channelConfig.intr_priority = 3;
+
+#if SOC_RMT_SUPPORT_DMA
+            // Each physical RMT channel only owns SOC_RMT_MEM_WORDS_PER_CHANNEL (48) words of
+            // on-chip memory; a channel asking for more borrows blocks from its neighbors, so
+            // with NUM_CHANNELS run back-to-back the last channels configured (higher indices,
+            // i.e. later strips) can end up with the least buffer headroom. That starves their
+            // ISR-driven refill during long transmissions and drops bits - worse on later
+            // channels, worse toward the end of a strip. DMA moves the buffer into ordinary SRAM,
+            // refilled by hardware instead of a per-bit ISR, so channels no longer fight over the
+            // tiny shared memory pool. See the RMT DMA note in the ESP-IDF docs.
+            //
+            // Size the DMA buffer to hold the whole frame (1 symbol per bit), capped so a very
+            // long strip doesn't reserve unbounded SRAM. A strip that fits under the cap gets a
+            // buffer big enough that the hardware never needs a mid-transmission refill at all;
+            // longer strips still get 8x the headroom of a single 48-word block.
+            constexpr size_t kMaxDmaBufferBytes = 1024;
+            const size_t bufferBytes = std::min(byteCount, kMaxDmaBufferBytes);
+            channelConfig.flags.with_dma = 1;
+            channelConfig.mem_block_symbols = std::max<size_t>(bufferBytes * 8, 64);
+#else
+            channelConfig.mem_block_symbols = 96;  // grow in steps of SOC_RMT_MEM_WORDS_PER_CHANNEL (48)
+#endif
 
             if (const auto error = rmt_new_tx_channel(&channelConfig, &_channels[channelIndex]); error != ESP_OK)
             {
@@ -679,12 +705,28 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
     // Queue every active channel first, then wait for completion in a second
     // pass. This keeps all strips in the same frame as closely aligned as the
     // RMT API allows.
+    //
+    // Starting all channels in the same instant means their initial DMA
+    // descriptor-fill bursts land on the shared memory bus simultaneously;
+    // with NUM_CHANNELS > 2 that contention can stall one channel's burst
+    // long enough to glitch a few dozen bits into its stream (observed
+    // around pixel 15 on channels 2/3, the ones started last). A short,
+    // fixed stagger between each channel's transmit call spreads those
+    // bursts out. This is deliberately much smaller than a full frame -
+    // waiting for each channel to finish before starting the next doesn't
+    // scale to the 1200-LED/20fps target (4 channels x ~36ms each would blow
+    // the ~50ms frame budget), whereas a few hundred microseconds of stagger
+    // is negligible at any supported frame rate/LED count.
+    constexpr uint32_t kInterChannelStaggerUs = 500;
 
     for (size_t channelIndex = 0; channelIndex < _activeChannelCount && channelIndex < devices.size(); ++channelIndex)
     {
         auto& state = _channels[channelIndex];
         if (!state.active || !state.installed || !state.outputBytes)
             continue;
+
+        if (channelIndex > 0)
+            delayMicroseconds(kInterChannelStaggerUs);
 
         _transport->TransmitChannel(channelIndex, state.outputBytes.get(), state.byteCount, state.pin, state.ledCount);
     }

@@ -46,6 +46,10 @@
 #include "systemcontainer.h"
 #include "taskmgr.h"   // DRAWING_STACK_SIZE / DRAWING_PRIORITY / DRAWING_CORE
 
+#if ENABLE_AUDIO
+#include "audioservice.h"
+#endif
+
 #include "effects/matrix/spectrumeffects.h"
 
 static DRAM_ATTR CRGB l_SinglePixel = CRGB::Blue;
@@ -92,6 +96,58 @@ static uint32_t ChannelsNeedingLocalDraw()
 
     return channelMask;
 }
+
+#if ENABLE_AUDIO
+
+// AudioNeededForActiveEffects
+//
+// Only a handful of effects are actually built around the analyzer (see
+// LEDStripEffect::RequiresAudio()), and channels being fed remotely never draw
+// a local effect at all. Both are checked so the PDM mic - and the GDMA channel
+// it shares with the RMT strip output - only runs when something needs it.
+
+static bool AudioNeededForActiveEffects(uint32_t channelsNeedingLocalDraw)
+{
+    if (channelsNeedingLocalDraw == 0)
+        return false;
+
+    auto& effectManager = g_ptrSystem->GetEffectManager();
+
+    if (!effectManager.AreChannelsIndependent())
+        return effectManager.HasCurrentEffect() && effectManager.GetCurrentEffect().RequiresAudio();
+
+    for (size_t channel = 0; channel < EffectManager::ChannelCount(); channel++)
+    {
+        if (!(channelsNeedingLocalDraw & (1u << channel)))
+            continue;
+
+        auto effect = effectManager.EffectAt(effectManager.GetChannelEffectIndex(channel));
+        if (effect && effect->RequiresAudio())
+            return true;
+    }
+
+    return false;
+}
+
+// UpdateAudioServiceForActiveEffects
+//
+// Starts/stops the audio sampler to match AudioNeededForActiveEffects(), reusing
+// AudioService::Reconfigure()'s existing stop/start and no-op-if-unchanged logic.
+// FromCurrentSettings() re-reads the persisted pin/mode, same as the normal
+// boot-time and settings-change enable paths.
+
+static void UpdateAudioServiceForActiveEffects(uint32_t channelsNeedingLocalDraw)
+{
+    auto& audioService = g_ptrSystem->GetAudioService();
+    const bool needed = AudioNeededForActiveEffects(channelsNeedingLocalDraw);
+
+    if (needed == audioService.IsRunning())
+        return;
+
+    audioService.Reconfigure(needed ? AudioConfig::FromCurrentSettings() : AudioConfig{});
+}
+
+#endif // ENABLE_AUDIO
 
 #if WIFI_ACTIVITY_PIN >= 0
 static bool IsWiFiDrawWindowActive()

@@ -452,6 +452,11 @@ class StarEffectBase : public EffectWithId<StarEffectBase<StarType, TEffect>>
     {
     }
 
+    // Only MusicStar actually consumes beats (see QueueMusicStarsForBeat); other
+    // star types read VURatio as an optional speed/probability flourish via
+    // _musicFactor, but render fine with the analyzer silent.
+    bool RequiresAudio() const override { return std::is_same_v<StarType, MusicStar>; }
+
     bool SerializeToJSON(JsonObject& jsonObject) override
     {
         auto jsonDoc = CreateJsonDocument();

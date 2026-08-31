@@ -136,6 +136,15 @@ class LEDStripEffect : public IJSONSerializable
 
     virtual bool CanDisplayVUMeter() const;
 
+    // RequiresAudio
+    //
+    // True if the effect is built around the audio analyzer (beat detection, spectrum,
+    // etc.) rather than just reading it opportunistically for a bit of extra flair.
+    // Used to decide whether the audio sampler needs to be running at all - see
+    // AudioNeededForActiveEffects() in drawing.cpp.
+
+    virtual bool RequiresAudio() const { return false; }
+
     virtual const String & FriendlyName() const             // User-visible effect name
     {
         return _friendlyName;
