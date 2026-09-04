@@ -1001,6 +1001,7 @@ void RemoteControl::handle()
     if (IR_ON == result)
     {
         debugI("Remote: Power ON (0x%08lX)", (unsigned long)result);
+        effectManager.PowerOn();
         effectManager.ClearRemoteColor();
         effectManager.SetInterval(0);
         effectManager.StartEffect();
@@ -1014,9 +1015,7 @@ void RemoteControl::handle()
             deviceConfig.SetBrightness((int)deviceConfig.GetBrightness() - BRIGHTNESS_STEP);
         #else
             effectManager.ClearRemoteColor();
-            effectManager.SetInterval(0);
-            effectManager.StartEffect();
-            deviceConfig.SetBrightness(0);
+            effectManager.PowerOff();
         #endif
         return;
     }

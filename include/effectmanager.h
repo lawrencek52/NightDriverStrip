@@ -163,6 +163,10 @@ class  EffectManager : public IJSONSerializable
 
     bool _channelsIndependent = false;
 
+    // IR remote power state. False means PowerOff() blanked every channel and the
+    // draw loop skips local rendering entirely (see EffectManager::IsPoweredOn()).
+    bool _poweredOn = true;
+
     void construct(bool clearTempEffect);
     void DispatchBeatIfNeeded();
 
@@ -321,6 +325,15 @@ public:
     void ClearRemoteColor(bool retainRemoteEffect = false);
 
     void StartEffect();
+
+    // PowerOff/PowerOn - IR remote power control (strip builds). PowerOff() blanks
+    // every channel immediately and tells the draw loop to stop rendering local
+    // effects, though channels being fed by WiFi (LED Central) keep drawing right
+    // over it. PowerOn() resumes the still-selected current effect where it left
+    // off - it doesn't restart or re-Init() anything.
+    bool IsPoweredOn() const { return _poweredOn; }
+    void PowerOff();
+    void PowerOn();
 
     void EnableEffect(size_t i, bool skipSave = false);
 

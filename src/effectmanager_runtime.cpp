@@ -278,6 +278,38 @@ void EffectManager::ClearRemoteColor(bool retainRemoteEffect)
     g_ptrSystem->GetDeviceConfig().ClearApplyGlobalColors();
 }
 
+// PowerOff/PowerOn
+//
+// IR remote power control. PowerOff() blanks every channel right away and clears
+// _poweredOn, which tells the draw loop (see ChannelsNeedingLocalDraw() callers in
+// drawing.cpp) to stop calling into the current effect. Channels still being fed by
+// WiFi (LED Central) are untouched by either of these - WiFiDraw() doesn't consult
+// _poweredOn at all, so incoming frames keep drawing, and painting over a blanked
+// channel is exactly what "restarts the strip" when data resumes. PowerOn() simply
+// flips the flag back; the current effect index was never touched, so the draw loop
+// resumes it right where it left off.
+
+void EffectManager::PowerOff()
+{
+    std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
+
+    if (!_poweredOn)
+        return;
+
+    _poweredOn = false;
+    for (auto& gfx : _gfx)
+        if (gfx)
+            gfx->Clear();
+
+    ReportNewFrameAvailable();
+}
+
+void EffectManager::PowerOn()
+{
+    std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
+    _poweredOn = true;
+}
+
 // ApplyGlobalColor
 //
 // When a global color is set via the remote, we create a fill effect and assign it as the "remote effect"

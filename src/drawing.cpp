@@ -516,8 +516,14 @@ void IRAM_ATTR RenderService::Run()
             // it, which is what makes the mixed case work at all: in shared mode
             // the single effect instance necessarily covers every strip it owns,
             // so ordering - not the mask - is what protects the remote-fed ones.
+            //
+            // Powered off (IR remote) forces the mask to 0 regardless of what
+            // ChannelsNeedingLocalDraw() says, so local effects stay suspended -
+            // WiFiDraw() below still runs unconditionally, so a channel being fed
+            // by LED Central lights right back up even while "off".
 
-            localPixelsDrawn = LocalDraw(ChannelsNeedingLocalDraw());
+            auto& effectManager = g_ptrSystem->GetEffectManager();
+            localPixelsDrawn = effectManager.IsPoweredOn() ? LocalDraw(ChannelsNeedingLocalDraw()) : 0;
 
             if (nd_network::IsWiFiConnected())
                 wifiPixelsDrawn = WiFiDraw();
