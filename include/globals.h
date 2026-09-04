@@ -848,15 +848,57 @@ extern const int g_aRingSizeTable[];
   // PDM mics are quiet in absolute terms - the Sense's MSM261 is spec'd at
   // -26 dBFS for 94 dB SPL, so music at normal listening levels sits near the
   // bottom of the 16-bit range and never lifts the noise floor far enough to
-  // clear the analyzer's quiet-frame gate. This fixed digital gain is applied
-  // to the samples as they arrive, so the gate, the VU and beat detection all
-  // see levels comparable to a line-level or M5 mic. Band power scales with the
-  // square of this, so 8 buys 64x. Raise it for a quiet room, lower it if loud
-  // passages sit pinned at full scale.
+  // clear the analyzer's quiet-frame gate. This digital gain is applied to the
+  // samples as they arrive, so the gate, the VU and beat detection all see
+  // levels comparable to a line-level or M5 mic. Band power scales with the
+  // square of this, so 8 buys 64x. It is only the AGC's starting point and its
+  // ceiling's counterpart at the bottom (PDM_AGC_MIN_GAIN) - see below for how
+  // the actual per-frame gain is chosen.
   #ifndef PDM_GAIN
     #define PDM_GAIN       8
   #endif
+
+  // Automatic gain control for the PDM path. A fixed PDM_GAIN clips on loud
+  // passages in a live room (the mic's 64 dB SNR / 120 dB SPL AOP mean the
+  // analog signal itself is fine; it's our fixed digital multiply that pins
+  // it at INT16_MAX) and is too quiet for soft ones. Downstream band
+  // normalization is already scale-invariant (see ExtractPDMPhase's comment),
+  // so gain only exists to keep the raw waveform out of clipping - overall
+  // loudness of the analysis is unaffected by it. Fast-attack/slow-release:
+  // an overload snaps the gain down before the next frame is sampled, while
+  // quiet stretches recover it gradually so background noise doesn't get
+  // pumped up to full scale.
+  //
+  // Peak alone isn't enough: steady wideband noise (HVAC hiss, typing) has
+  // its peak close to its own RMS, so a quiet room still lets gain creep all
+  // the way to the ceiling and the amplified hiss then pins the FFT bars.
+  // PDM_AGC_RELEASE_SNR_GATE requires the frame's RMS to clear a tracked
+  // ambient RMS floor by this ratio before gain is allowed to climb -
+  // steady noise never clears it (its RMS just becomes the new floor), while
+  // music's transients sit above the floor and do.
+  #ifndef PDM_AGC_MIN_GAIN
+    #define PDM_AGC_MIN_GAIN          2.0f   // Never below this even in a loud room
+  #endif
+  #ifndef PDM_AGC_MAX_GAIN
+    #define PDM_AGC_MAX_GAIN          48.0f  // Ceiling so silence can't be amplified past useful headroom
+  #endif
+  #ifndef PDM_AGC_TARGET_PEAK_FRACTION
+    #define PDM_AGC_TARGET_PEAK_FRACTION  0.75f  // Target headroom for the loudest sample in a frame
+  #endif
+  #ifndef PDM_AGC_RELEASE_PER_FRAME
+    #define PDM_AGC_RELEASE_PER_FRAME 0.01f  // Fractional gain recovery per frame once headroom allows
+  #endif
+  #ifndef PDM_AGC_NOISE_ADAPT
+    #define PDM_AGC_NOISE_ADAPT   0.02f  // How fast the tracked ambient RMS floor rises toward sustained noise
+  #endif
+  #ifndef PDM_AGC_NOISE_DECAY
+    #define PDM_AGC_NOISE_DECAY   0.98f  // How fast the ambient RMS floor relaxes once things quiet back down
+  #endif
+  #ifndef PDM_AGC_RELEASE_SNR_GATE
+    #define PDM_AGC_RELEASE_SNR_GATE  1.4f  // Frame RMS must exceed the ambient floor by this ratio to gain further
+  #endif
 #endif
+
 
 
 

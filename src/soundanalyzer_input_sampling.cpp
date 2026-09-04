@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <numeric>
 
 #include "soundanalyzer.h"
@@ -109,7 +110,8 @@ size_t SoundAnalyzerBase::SampleI2S_Legacy()
 
 // Both PDM backends capture the data line on both clock phases as a stereo pair
 // and pick the one the mic actually drives, so neither has to assume a sampling
-// edge. They also apply PDM_GAIN; see the note on that macro in globals.h.
+// edge. They also apply a dynamic AGC gain; see GetAndUpdatePDMGain() below and
+// the PDM_AGC_* macros in globals.h.
 
 #if USE_PDM_AUDIO
 namespace
@@ -149,16 +151,71 @@ namespace
         return louder;
     }
 
+    // De-interleave the chosen phase into the analyzer's buffer, applying a
+    // dynamic input gain on the way. The gain is chosen per-frame from this
+    // frame's own peak so loud passages never clip: fast attack (snap down
+    // immediately on overload) protects this frame, slow release (creep back
+    // up while there's headroom) recovers gain gradually. Release is further
+    // gated on crest factor (frame RMS vs. a tracked ambient RMS floor):
+    // steady wideband noise (HVAC hiss, typing) has RMS close to its own
+    // floor, so it never clears the gate and gain holds; music's transients
+    // sit well above the floor and do clear it, so gain still climbs to use
+    // the available headroom. Downstream band normalization is scale-
+    // invariant (see the file header comment near PDM_GAIN in globals.h), so
+    // this only trades off clipping avoidance against bit depth - it doesn't
+    // change how "loud" the analyzer perceives anything.
+    float GetAndUpdatePDMGain(const int16_t * frames, size_t frameCount, int phase)
+    {
+        static float gain = (float)PDM_GAIN;
+        static float noiseFloorRms = 1.0f;
+
+        // Widen to int: abs(INT16_MIN) doesn't fit back in an int16_t.
+        int peak = 0;
+        double sumSquares = 0.0;
+        for (size_t i = 0; i < frameCount; ++i)
+        {
+            const int sample = std::abs((int)frames[i * kPDMPhases + phase]);
+            peak = std::max(peak, sample);
+            sumSquares += (double)sample * (double)sample;
+        }
+        const float rms = (frameCount > 0) ? sqrtf((float)(sumSquares / (double)frameCount)) : 0.0f;
+
+        // Same rise-while-above/decay-while-below tracker used for the per-band
+        // noise floors in ProcessPeaksEnergy: slow to rise so a single transient
+        // can't masquerade as the new ambient level, slow to decay so it doesn't
+        // just echo whatever played last.
+        if (rms > noiseFloorRms)
+            noiseFloorRms = noiseFloorRms * (1.0f - PDM_AGC_NOISE_ADAPT) + rms * PDM_AGC_NOISE_ADAPT;
+        else
+            noiseFloorRms *= PDM_AGC_NOISE_DECAY;
+        noiseFloorRms = std::max(noiseFloorRms, 1.0f);
+
+        constexpr float kTarget = PDM_AGC_TARGET_PEAK_FRACTION * (float)INT16_MAX;
+        if (peak > 0)
+        {
+            const float neededGain = std::clamp(kTarget / (float)peak, PDM_AGC_MIN_GAIN, PDM_AGC_MAX_GAIN);
+            const bool aboveAmbient = rms > noiseFloorRms * PDM_AGC_RELEASE_SNR_GATE;
+            if (neededGain < gain)
+                gain = neededGain;                                                   // fast attack: snap down now
+            else if (aboveAmbient)
+                gain += (neededGain - gain) * PDM_AGC_RELEASE_PER_FRAME;             // slow release: creep back up
+        }
+
+        gain = std::clamp(gain, (float)PDM_AGC_MIN_GAIN, (float)PDM_AGC_MAX_GAIN);
+        return gain;
+    }
+
     // De-interleave the chosen phase into the analyzer's buffer, applying the
-    // saturating input gain on the way. Only transients should ever reach the
-    // clamp; clipping those costs nothing the FFT cares about.
+    // dynamic input gain computed above. The clamp remains as a last-resort
+    // safety net; the AGC should keep genuine samples well inside it.
     void ExtractPDMPhase(const int16_t * frames, size_t frameCount, int16_t * out)
     {
         const int phase = SelectPDMPhase(frames, frameCount);
+        const float gain = GetAndUpdatePDMGain(frames, frameCount, phase);
 
         for (size_t i = 0; i < frameCount; ++i)
-            out[i] = static_cast<int16_t>(std::clamp(frames[i * kPDMPhases + phase] * PDM_GAIN,
-                                                     (int)INT16_MIN, (int)INT16_MAX));
+            out[i] = static_cast<int16_t>(std::clamp(frames[i * kPDMPhases + phase] * gain,
+                                                     (float)INT16_MIN, (float)INT16_MAX));
     }
 }
 #endif
