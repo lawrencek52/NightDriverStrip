@@ -558,6 +558,7 @@ The first three app assets may be gzip encoded by firmware. The timezone documen
 - `COMPILED_AUDIO_INPUT_PIN`
 - `CONFIGURED_AUDIO_INPUT_PIN`
 - `AUDIO_INPUT_MODE`
+- `BUILD_TIMESTAMP` (firmware compile date/time, e.g. `Sep 4 2026 14:32:10`; from `__DATE__`/`__TIME__`, updates every compile)
 - `FRAMES_SOCKET`
 - `EFFECTS_SOCKET`
 - `CHIP_MODEL`

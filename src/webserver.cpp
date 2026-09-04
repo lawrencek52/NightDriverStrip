@@ -368,6 +368,9 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         j["DMA_SIZE"]                   = _staticStats.DmaHeapSize;
         j["PSRAM_SIZE"]                 = _staticStats.PsramSize;
         j["CODE_FREE"]                  = _staticStats.FreeSketchSpace;
+        // __DATE__/__TIME__ are stamped by the preprocessor on every compile, so this
+        // always reflects when the running firmware was built, with no version bump needed.
+        j["BUILD_TIMESTAMP"]            = __DATE__ " " __TIME__;
     }
 
     if ((statsType & StatisticsType::Dynamic) != StatisticsType::None)

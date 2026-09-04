@@ -215,6 +215,10 @@ a {
   text-shadow: 0 0 12px rgba(var(--card-rgb), 0.28);
 }
 
+#statsBuildInfo {
+  text-align: center;
+}
+
 .subtitle,
 .muted {
   color: var(--muted);

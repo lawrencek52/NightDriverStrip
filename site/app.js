@@ -138,7 +138,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       "summaryTopology", "summaryDriver", "summaryLedFps", "summaryAudioFps", "summaryCpu",
       "summaryCpuCores", "summaryHeap", "summaryPsram",
       "effectsMeta", "effectsTableBody", "channelStrip", "reloadSettingsButton", "applySettingsButton",
-      "applySettingsRebootButton", "deviceSettingsForm", "statsTimestamp", "statsGrid",
+      "applySettingsRebootButton", "deviceSettingsForm", "statsTimestamp", "statsBuildInfo", "statsGrid",
       "previewConnectButton", "previewDisconnectButton", "previewStatus", "previewWrap", "previewCanvas",
       "tabEffectsButton", "tabSettingsButton", "tabStatisticsButton",
       "tabEffectsPane", "tabSettingsPane", "tabStatisticsPane", "tabBodyPanel",
@@ -1903,6 +1903,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
     els.statsGrid.replaceChildren(...cards);
     els.statsTimestamp.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    els.statsBuildInfo.textContent = `Compiled on: ${staticStats.BUILD_TIMESTAMP || "--"}`;
   }
 
   function statCard(title, rows, meterPercent) {

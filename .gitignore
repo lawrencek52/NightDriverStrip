@@ -12,6 +12,7 @@ compile_commands.json
 **/*.swo
 **/*.swp
 **/custom_*.h
+*.d
 # Recursive IDE and swap junk
 build/**
 custom_*.ini
