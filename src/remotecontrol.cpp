@@ -85,6 +85,13 @@
 
 #include "effects/strip/misceffects.h"
 
+// Verbose per-frame diagnostics (raw RMT symbol dumps, ISR firing counts, etc.)
+// for debugging IR reception issues. Off by default since it's very chatty;
+// override with -DENABLE_IR_DIAG=1 in a build environment's build_flags.
+#ifndef ENABLE_IR_DIAG
+    #define ENABLE_IR_DIAG 0
+#endif
+
 // RemoteColorCode
 //
 // Maps an IR remote code to a color and a name
@@ -562,13 +569,15 @@ public:
         rmt_item32_t* items = (rmt_item32_t*)xRingbufferReceive(_ringbuf, &size, 0);
         if (items)
         {
+            const size_t symbolCount = size / sizeof(rmt_item32_t);
+
+#if ENABLE_IR_DIAG
             // DIAG: count successful ringbuffer reads. Each non-NULL
             // return = one completed NEC frame worth of symbols.
             // Stops incrementing -> RMT hardware isn't delivering events.
             // Keeps incrementing but no "Remote:" line -> parser rejects
             // the frame (timing/tolerance, not hardware).
             static int  s_rbHitCount = 0;
-            const size_t symbolCount = size / sizeof(rmt_item32_t);
             Serial.printf("[IR-DIAG] ringbuffer frame #%d symbols=%u bytes=%u\n",
                           ++s_rbHitCount,
                           (unsigned)symbolCount,
@@ -596,6 +605,7 @@ public:
                               (unsigned)l1, (unsigned)d1,
                               (d0 == 0 && d1 == 0) ? "  (both zero - idle clamped)" : "");
             }
+#endif
 
             // rmt_item32_t and IrSymbol share the same 32-bit bitfield
             // layout (verified by static_assert on sizeof). Reinterpret
@@ -606,6 +616,7 @@ public:
                                                symbolCount,
                                                code, isRepeat);
 
+#if ENABLE_IR_DIAG
             // DIAG: report parser outcome separately so we can tell
             // "frame arrived, parser rejected" from "frame arrived, parsed".
             if (!success)
@@ -614,6 +625,7 @@ public:
             else
                 Serial.printf("[IR-DIAG] ParseNecFrame OK code=0x%08lX repeat=%d\n",
                               (unsigned long)code, (int)isRepeat);
+#endif
 
             vRingbufferReturnItem(_ringbuf, items);
             return success;
@@ -802,12 +814,14 @@ private:
         // rearm-state bug. If it keeps incrementing but no "Remote:"
         // line appears in the terminal, the parser is rejecting the frame
         // (timing/tolerance, not a hardware issue).
+#if ENABLE_IR_DIAG
         static int s_isrCount = 0;
         Serial.printf("[IR-DIAG] on_recv_done #%d symbols=%u edata=%p symbols_ptr=%p\n",
                       ++s_isrCount,
                       (unsigned)(edata ? edata->num_symbols : 0),
                       (void*)edata,
                       edata ? (void*)edata->received_symbols : (void*)nullptr);
+#endif
 
         if (self->_frameQueue && edata && edata->received_symbols)
         {
@@ -949,6 +963,7 @@ void RemoteControl::handle()
     uint32_t result = 0;
     bool isRepeat = false;
     static uint32_t lastResult = 0;
+    static uint32_t lastAcceptedTime = 0;
 
     if (!_pImpl->decode(result, isRepeat))
         return;
@@ -959,24 +974,25 @@ void RemoteControl::handle()
 
     if (result == 0) return;
 
-    if (isRepeat || result == lastResult)
-    {
-        static uint lastRepeatTime = millis();
-        auto kMinRepeatms = 200;
+    // Debounce: NEC repeat frames - and remotes that simply resend the full
+    // frame while held, rather than sending a proper repeat code - can arrive
+    // faster than a human intends a second press, e.g. if the button is held
+    // just a touch longer than a quick tap. lastAcceptedTime is updated on
+    // every accepted key below (not just here), so a stale timestamp from an
+    // earlier, unrelated keypress can never masquerade as "recently accepted".
+    uint32_t kMinRepeatms = 200;
 
-        if (result == IR_OFF)
-            kMinRepeatms = 0;
-        else if (isRepeat)
-            kMinRepeatms = 500;
-        else if (result == lastResult)
-            kMinRepeatms = 50;
+    if (result == IR_OFF)
+        kMinRepeatms = 0;           // Power off should never be swallowed
+    else if (isRepeat)
+        kMinRepeatms = 500;         // NEC protocol repeat cadence
+    else if (result == lastResult)
+        kMinRepeatms = 50;         // Same button re-pressed quickly
 
-        if (millis() - lastRepeatTime <= kMinRepeatms)
-            return;
+    if (millis() - lastAcceptedTime <= kMinRepeatms)
+        return;
 
-        lastRepeatTime = millis();
-    }
-
+    lastAcceptedTime = millis();
     lastResult = result;
 
     auto &effectManager = g_ptrSystem->GetEffectManager();
@@ -1006,7 +1022,7 @@ void RemoteControl::handle()
     }
     else if (IR_BPLUS == result)
     {
-        debugI("Remote: Bright/Speed + (0x%08lX)", (unsigned long)result);
+        debugI("Remote: Bright/Speed Up (0x%08lX)", (unsigned long)result);
         if (deviceConfig.RemoteEffectButtonsResetInterval())
             effectManager.SetInterval(DEFAULT_EFFECT_INTERVAL, true);
         if (deviceConfig.ApplyGlobalColors())
@@ -1018,7 +1034,7 @@ void RemoteControl::handle()
     }
     else if (IR_BMINUS == result)
     {
-        debugI("Remote: Bright/Speed - (0x%08lX)", (unsigned long)result);
+        debugI("Remote: Bright/Speed Down (0x%08lX)", (unsigned long)result);
         if (deviceConfig.RemoteEffectButtonsResetInterval())
             effectManager.SetInterval(DEFAULT_EFFECT_INTERVAL, true);
         if (deviceConfig.ApplyGlobalColors())
