@@ -521,9 +521,21 @@ void IRAM_ATTR RenderService::Run()
             // ChannelsNeedingLocalDraw() says, so local effects stay suspended -
             // WiFiDraw() below still runs unconditionally, so a channel being fed
             // by LED Central lights right back up even while "off".
+            //
+            // The first frame after PowerOff() is special-cased: PostProcessFrame()
+            // treats "0 pixels drawn" as nothing to transmit, so the buffer
+            // PowerOff() already zeroed would otherwise never reach the physical
+            // strip - it would just keep showing its last real frame. Claiming the
+            // full active LED count for that one frame forces the (already black)
+            // buffer to actually transmit, then subsequent frames go back to 0/idle.
 
             auto& effectManager = g_ptrSystem->GetEffectManager();
-            localPixelsDrawn = effectManager.IsPoweredOn() ? LocalDraw(ChannelsNeedingLocalDraw()) : 0;
+            if (effectManager.IsPoweredOn())
+                localPixelsDrawn = LocalDraw(ChannelsNeedingLocalDraw());
+            else if (effectManager.ConsumePendingBlankFrame())
+                localPixelsDrawn = static_cast<uint16_t>(g_ptrSystem->GetDeviceConfig().GetActiveLEDCount());
+            else
+                localPixelsDrawn = 0;
 
             if (nd_network::IsWiFiConnected())
                 wifiPixelsDrawn = WiFiDraw();

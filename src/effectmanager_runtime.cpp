@@ -288,6 +288,17 @@ void EffectManager::ClearRemoteColor(bool retainRemoteEffect)
 // channel is exactly what "restarts the strip" when data resumes. PowerOn() simply
 // flips the flag back; the current effect index was never touched, so the draw loop
 // resumes it right where it left off.
+//
+// PostProcessFrame() (ws281xgfx.cpp) treats a "0 pixels drawn" report as nothing to
+// transmit, so merely zeroing the software buffer here never reaches the physical
+// strip - it keeps showing its last real frame forever. _pendingBlankFrame tells the
+// draw loop to claim a real (non-zero) pixel count for exactly one frame so this
+// blanked buffer actually gets sent. That transmit - and the ReportNewFrameAvailable()
+// call that goes with any drawn frame - happens on the render thread via
+// ConsumePendingBlankFrame(), not here: this runs on the IR remote task, and posting
+// frame-listener callbacks from a second thread while already holding the render
+// locks is exactly the kind of cross-thread reentrancy that caused the crash on
+// repeated on/off toggling.
 
 void EffectManager::PowerOff()
 {
@@ -301,13 +312,14 @@ void EffectManager::PowerOff()
         if (gfx)
             gfx->Clear();
 
-    ReportNewFrameAvailable();
+    _pendingBlankFrame = true;
 }
 
 void EffectManager::PowerOn()
 {
     std::scoped_lock guard(g_render_mutex, g_effect_manager_mutex);
     _poweredOn = true;
+    _pendingBlankFrame = false;
 }
 
 // ApplyGlobalColor

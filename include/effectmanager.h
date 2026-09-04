@@ -167,6 +167,10 @@ class  EffectManager : public IJSONSerializable
     // draw loop skips local rendering entirely (see EffectManager::IsPoweredOn()).
     bool _poweredOn = true;
 
+    // Set by PowerOff(), consumed by the draw loop via ConsumePendingBlankFrame() to
+    // transmit the just-blanked buffer to hardware exactly once before going quiet.
+    bool _pendingBlankFrame = false;
+
     void construct(bool clearTempEffect);
     void DispatchBeatIfNeeded();
 
@@ -334,6 +338,19 @@ public:
     bool IsPoweredOn() const { return _poweredOn; }
     void PowerOff();
     void PowerOn();
+
+    // Only ever called by RenderService::Run() while it already holds
+    // g_render_mutex + g_effect_manager_mutex (no locking here on purpose - see
+    // PowerOff()'s comment on why the frame-listener notification for this
+    // "final blank frame" must happen from the render thread, not here).
+    // Returns true (and clears the flag) exactly once per PowerOff() call.
+    bool ConsumePendingBlankFrame()
+    {
+        if (!_pendingBlankFrame)
+            return false;
+        _pendingBlankFrame = false;
+        return true;
+    }
 
     void EnableEffect(size_t i, bool skipSave = false);
 
