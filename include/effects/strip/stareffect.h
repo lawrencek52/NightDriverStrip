@@ -646,9 +646,14 @@ class GlobalColorStarEffect : public StarEffectBase<StarType, GlobalColorStarEff
 {
     using Base = StarEffectBase<StarType, GlobalColorStarEffect<StarType>>;
 
-    // Rebuilt lazily each time a star is spawned while a global color is active; mutable
-    // because EffectivePalette() is const but must cache the derived gradient somewhere.
+    // Cached gradient derived from the global color, rebuilt only when that color
+    // actually changes - EffectivePalette() is called once per star spawned, which is
+    // up to cMaxNewStarsPerFrame times a frame, and building a CRGBPalette16 each time
+    // is pure waste. Both are mutable because EffectivePalette() is const but has to
+    // cache somewhere.
     mutable CRGBPalette16 _globalColorPalette;
+    mutable CRGB _globalColorCached = CRGB::Black;
+    mutable bool _globalColorValid = false;
 
   public:
     using Base::StarEffectBase;
@@ -660,8 +665,14 @@ class GlobalColorStarEffect : public StarEffectBase<StarType, GlobalColorStarEff
             return Base::_palette;
 
         const CRGB& color = deviceConfig.GlobalColor();
-        CHSV hsv = rgb2hsv_approximate(color);
-        _globalColorPalette = CRGBPalette16(CRGB::Black, color, CRGB(CHSV(hsv.hue, 200, 255)), CRGB::White);
+        if (!_globalColorValid || color != _globalColorCached)
+        {
+            CHSV hsv = rgb2hsv_approximate(color);
+            _globalColorPalette = CRGBPalette16(CRGB::Black, color, CRGB(CHSV(hsv.hue, 200, 255)), CRGB::White);
+            _globalColorCached = color;
+            _globalColorValid = true;
+        }
+
         return _globalColorPalette;
     }
 };

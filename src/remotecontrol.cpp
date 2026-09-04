@@ -1005,7 +1005,13 @@ void RemoteControl::handle()
         effectManager.ClearRemoteColor();
         effectManager.SetInterval(0);
         effectManager.StartEffect();
-        deviceConfig.SetBrightness(BRIGHTNESS_MAX);
+        // Only restore full brightness where OFF is what took it away. On HUB75 builds
+        // OFF steps brightness down, so ON is its counterpart; on strip builds OFF blanks
+        // via PowerOff() and leaves brightness alone, so forcing it to max here would
+        // silently overwrite (and persist) whatever the user set in the web UI.
+        #if USE_HUB75
+            deviceConfig.SetBrightness(BRIGHTNESS_MAX);
+        #endif
         return;
     }
     else if (IR_OFF == result)

@@ -30,6 +30,7 @@ _Davepl, 9/19/2021_
 - [Getting started with the source code](#getting-started-with-the-source-code)
 - [Wifi setup](#wifi-setup)
 - [Feature defines](#feature-defines)
+- [IR remote control](#ir-remote-control)
 - [Adding new effects](#adding-new-effects)
 - [Notes on JSON persistence](#notes-on-json-persistence)
 - [Resetting the effect list](#resetting-the-effect-list)
@@ -37,6 +38,7 @@ _Davepl, 9/19/2021_
 - [Build pointers](#build-pointers)
   - [Build tools](#build-tools)
   - [Build commands](#build-commands)
+  - [Optional audit policy](#optional-audit-policy)
 - [File system](#file-system)
 - [Tools](#tools)
 - [COM port problems](#com-port-problems)
@@ -147,6 +149,8 @@ On devices with WiFi, NightDriverStrip can start a webserver that hosts the web 
 
 When the device is started with the webserver enabled, the web UI can be accessed by opening a web browser and typing the IP address of your device in the address bar. Once loaded, the icons at the left of the screen can be used to toggle views within the UI on and off.
 
+Two live data feeds are available in the UI when the build supports them: a preview of the pixels being sent to the LEDs (over the `/ws/frames` WebSocket) and, on builds with audio, a telemetry view of the FFT band peaks, VU levels and beat detection (over `/ws/audio`). Both have their own Connect/Disconnect buttons, and the Statistics tab reports whether each socket is compiled into the running firmware.
+
 More information about the web UI can be found [in its own README.md](site/README.md).
 
 Besides the web UI, the webserver also publishes a REST-like API. Amongst others, a range of configuration settings can be read and changed using it.
@@ -197,12 +201,18 @@ Note: Some defines are board specific, this is noted below.
 
 | Hardware Specific | Description                                         | Supported Boards             |
 | ----------------- | --------------------------------------------------- | ---------------------------- |
-| USE_M5DISPLAY     | Enable stats display on built in LCD                | M5Stick-C and M5Stick-C Plus |
-| USE_OLED          | Enable stats display on built in OLED               | Heltec Wifi Kit 32           |
-| USE_LCD           | Enable stats display on external ILI9341 LCD        | Wrover32                     |
-| USE_TFTSPI        | Enable stats display on external TTGO LCD           | esp32dev                     |
-| ENABLE_AUDIO      | Listen for audio from the microphone and process it | M5Stick-C and M5Stick-C Plus |
+| USE_SCREEN        | Enable the on-device status/stats display           | Any board with a screen      |
+| ENABLE_AUDIO      | Listen for audio from the microphone and process it | Boards with an analog, I2S or PDM mic - e.g. M5Stick-C/C Plus, Mesmerizer, XIAO ESP32-S3 Sense |
 | ENABLE_REMOTE     | IR Remote Control                                   | Requires IR Hardware         |
+
+`USE_SCREEN` is the only display flag you set yourself. Which driver gets used is then derived automatically in `globals.h` from the board definition that `platformio.ini` selects, so you do **not** set these:
+
+| Derived define | Driver selected                              | Chosen for                     |
+| -------------- | -------------------------------------------- | ------------------------------ |
+| USE_M5DISPLAY  | Stats display on the built-in LCD            | M5Stick-C and M5Stick-C Plus   |
+| USE_OLED       | Stats display on the built-in monochrome OLED | Heltec WiFi Kit 32             |
+| USE_LCD        | Stats display on the onboard ILI9341 LCD     | Wrover32                       |
+| USE_TFTSPI     | Stats display via TFT_eSPI                   | TTGO, Feather TFT, LilyGO S3   |
 
 <!-- markdownlint-disable MD033 -->
 The webserver, which can be enabled using ENABLE_WEBSERVER as indicated, comes with a number of capabilities that can themselves be enabled or disabled individually. Each of them comes with a default enabled state that depends on the values of other defines. The defaults can be overridden by setting the defines explicitly. Do note that enabling a feature is only sensible if its prerequisites are met - those are the conditions that enable the feature by default.<br>The following table discusses this.
@@ -213,6 +223,7 @@ The webserver, which can be enabled using ENABLE_WEBSERVER as indicated, comes w
 | ENABLE_WEB_UI | Enable the on-board web UI | ENABLE_WEBSERVER is 1 |
 | COLORDATA_WEB_SOCKET_ENABLED | Enable the WebSocket for sending color data to connected web UI clients (browsers); required for the effect preview feature of the web UI | ENABLE_WIFI is 1 and ENABLE_WEBSERVER is 1 and COLORDATA_SERVER_ENABLED is 1 |
 | EFFECTS_WEB_SOCKET_ENABLED | Enable the WebSocket for pushing updates to connected web UI clients (browsers) about effects, both activation state and configuration. | ENABLE_WIFI is 1 and ENABLE_WEBSERVER is 1 |
+| AUDIO_WEB_SOCKET_ENABLED | Enable the `/ws/audio` WebSocket, which streams audio telemetry (FFT band peaks, VU levels and beat detection state) to connected clients as JSON. | ENABLE_WIFI is 1 and ENABLE_WEBSERVER is 1 and ENABLE_AUDIO is 1 |
 
 Example in platformio.ini (prefix the flags with `-D`, e.g. `ENABLE_WIFI=1` becomes `-DENABLE_WIFI=1`):
 
@@ -226,18 +237,45 @@ Example in globals.h:
 #define ENABLE_WIFI 1
 ```
 
+## IR remote control
+
+Builds with `ENABLE_REMOTE=1` listen for NEC-protocol IR codes on `IR_REMOTE_PIN` (default 25; most environments override it - see `platformio.ini`). Two of the common cheap LED remotes are supported: the 24-key black/color remote by default, and the 44-key white remote with DIY keys if you build with `-DREMOTE_KEY44=1`.
+
+| Button | What it does |
+| - | - |
+| Power ON | Resumes output, clears any global color set from the remote, restarts effect rotation and sets brightness to maximum |
+| Power OFF | On HUB75 builds, steps the brightness down. On strip builds, blanks every channel and suspends local effects - see the note below |
+| Bright/Speed + / - | Next / previous effect, or clears the global color if one is active. Also resets the effect interval when the `RemoteEffectButtonsResetInterval` device setting is on |
+| SMOOTH | Clears the global color and switches to the fast "smooth" effect rotation interval |
+| STROBE / FLASH | Next / previous palette |
+| FADE | Toggles the VU meter overlay |
+| Color keys | Sets a global color, which is drawn as a fill over the current effect |
+
+Note that Power OFF on strip builds is a local-effect power state, not a hardware cutoff: channels that are being fed frames by an external sender (LED Central) keep drawing right over the blanked buffer, so a remotely driven strip lights back up even while "off". The state is held in memory only, so a reboot comes back on, and it is not currently exposed through the web UI or REST API - only the remote can toggle it.
+
 ## Adding new effects
 
 To add new effects, you:
 
-1. Derive from `EffectWithId` (or an existing effect class) and the good stuff happens in the only important function, `Draw()`.
+1. Create a header for your effect in `include/effects/strip/` (or `include/effects/matrix/` for HUB75 effects), and derive from `EffectWithId<YourEffect>` - the CRTP base - or from an existing effect class. The good stuff happens in the only important function, `Draw()`.
 Check out what the built-in effects do, but in short you're basically drawing into an array of CRGB objects that each represent a 24-bit color triplet. Once you're done, the CRGB array is sent to the LEDs and you are asked for the next frame immediately. Your draw method should take somewhere around 30ms, ideally, and should `delay()` to sleep for the balance if it's quicker. You **can** draw repeatedly basically in a busy loop, but its not needed.
-2. Add an effect number `#define` for your effect class to `effects.h`. Each effect class needs only one effect number, and please make sure the number you choose is not already used by another effect class! More information about the link between an effect class and its associated effect number can be found in `effects.h`.
-3. Add your class to the effect list created in the `LoadEffectFactories()` function in `effects.cpp` (under your build configuration section, like `DEMO`). The `ADD_EFFECT()` macro expects the effect number and type name of your new effect as parameters. Any additional parameters are passed to the effect's constructor when it's created.
+2. You do not need to pick an effect number. `EffectWithId<YourEffect>` derives a stable `EffectId` automatically by hashing your class's type name at compile time (see `_effect_id_detail::token_id_for_type` in `include/ledstripeffect.h`), so IDs can't collide by accident and there is nothing to register in `effects.h`. That file now only holds the shared JSON property-name defines.
+3. Register your class in the `LoadEffectFactories()` function in `src/effects.cpp`, inside the `EFFECTS_*` effect-set block(s) that should include it. Registration uses `RegisterAll()` with one `Effect<YourEffect>(...)` entry per instance; anything you pass is forwarded to the effect's constructor:
+
+    ```C++
+    #if defined(EFFECTS_SIMPLE)
+        RegisterAll(*g_ptrEffectFactories,
+            Effect<FireEffect>("Medium Fire", NUM_LEDS, 1, 3, 100, 3, 4, true, true),
+            Effect<YourEffect>(/* constructor arguments */)
+        );
+    #endif
+    ```
+
+    Wrap an entry in `Disabled(...)` if it should be registered but not enabled by default. Which `EFFECTS_*` set a given build gets is decided by the `-DEFFECTS_...` flag in that environment's `build_src_flags` in `platformio.ini`.
 
 There is a global `EffectManager` instance that first creates the effect table from a JSON file on SPIFFS, if present. Then it adds any other effects that are registered in `LoadEffectFactories()` but not included in the JSON file. It then rotates amongst those effects at a rate controlled by `DEFAULT_EFFECT_INTERVAL`. Effects are not notified when they go active or not, they're just asked to draw when needed.
 
-Each channel of LEDs has a `WS281xGFX` instance associated with it. `_GFX[0]` is the `WS281xGFX` associated with `LED_PIN0`, and so on. You can get the LED buffer of Pin0 by calling `_GFX[0]->leds()`, and it will contain `_GFX[0]->GetLEDCount` pixels. You can draw into the buffer without ever touching the raw bytes by calling `fill_solid`, `fill_rainbow`, `setPixel`, and other drawing functions.
+Each channel of LEDs has its own `GFXBase`-derived instance (a `WS281xGFX` for WS281x strips, `HUB75GFX` for matrices). Channel 0 is the one associated with `LED_PIN0`, and so on. Inside an effect you reach them through the effect manager: `g_ptrSystem->GetEffectManager().g(0)` is channel 0's graphics object, its pixel buffer is the public `leds` member, and it holds `GetLEDCount()` pixels. You can draw into the buffer without ever touching the raw bytes by calling `fill_solid`, `fill_rainbow`, `setPixel`, and other drawing functions.
 
 The simplest configuration, `DEMO`, assumes you have a single meter strip of 144 LEDs and a power supply connected to your ESP32. It boots up, finds a single `RainbowFillEffect` in the `LoadEffectFactories()` function, and repeatedly calls its `Draw()` method to update the CRGB array before sending it out to the LEDs. If working correctly it should draw a scrolling rainbow palette on your LED strip.
 
@@ -288,13 +326,11 @@ If you develop an effect that requires data to be pulled in from the Internet th
 
 The project can be built using [PlatformIO](https://platformio.org/). There's a [PlatformIO IDE](https://platformio.org/platformio-ide) available, which is built on top of Visual Studio Code. Included in it are the command-line [PlatformIO Core](https://platformio.org/install/cli) tools. They can also be installed on their own if you prefer not using the IDE.
 
-To compile the front-end application (which is part of every PlatformIO build) a recent version of NodeJS with NPM is required. They can be downloaded from the [NodeJS website](https://nodejs.org/en). Instructions for supported ways to install NodeJS are available there as well. Please do read and follow them.
+PlatformIO is the only prerequisite. The web UI is plain HTML/CSS/JavaScript with no bundler, so **NodeJS and NPM are not needed to build the firmware**. A pre-build hook (`tools/bake_site.py`) simply gzips `site/index.html`, `site/styles.css` and `site/app.js` into `site/dist/`, and those compressed files are embedded in flash. That hook - like the other build scripts in `tools/` - runs on the Python interpreter PlatformIO already ships with, so there is nothing extra to install.
 
-**Note** that installing NodeJS using your operating system's/distribution's default package manager is likely to leave you with a much older NodeJS version than you need.
+NodeJS is only useful if you want to lint the front-end while editing it (`npx eslint site/app.js`); it plays no part in a normal build.
 
-The application has been tested on node version 16.15.1 and 18.17.1 with NPM version 8.13.2; newer versions should also work in principle.
-
-For details on working with the frontend application see [site/README.md](./site/README.md).
+For details on working with the front-end application see [site/README.md](./site/README.md).
 
 ### Build commands
 
@@ -308,11 +344,28 @@ This will build the `demo` config.
 
 > If you get an error that `pio` is not found, you might need to [add it to your path](https://docs.platformio.org/en/stable/core/installation/shell-commands.html).
 
-To build all available configurations, use the following command (this might take a while):
+To see the full list of build environments (there are around sixty), use:
 
 ```ShellConsole
-pio run
+python tools/show_envs.py
 ```
+
+Note that running `pio run` **without** `-e` does *not* build everything: `platformio.ini` sets `default_envs` in its `[platformio]` section, and that single environment is what gets built. Change `default_envs` if you'd rather have a different project be your default, or always pass `-e`.
+
+To actually build every available configuration (this takes a while - see [Time it takes to build this project](#time-it-takes-to-build-this-project)), use:
+
+```ShellConsole
+python tools/build_all.py
+```
+
+Uploading and monitoring work per environment as usual:
+
+```ShellConsole
+pio run -e demo -t upload
+pio device monitor
+```
+
+You can keep your own board and environment definitions out of the repository by putting them in a `custom_*.ini` file in the project root; `platformio.ini` pulls those in automatically and they are gitignored.
 
 ### Optional audit policy
 

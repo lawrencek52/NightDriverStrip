@@ -170,8 +170,9 @@ void ConfigureMatrixJpegDecoder()
 }
 #endif
 
-// This function sets up the effect factories for the effects for whatever project is being built. The ADD_EFFECT macro variations
-//   are provided and used for convenience.
+// This function sets up the effect factories for the effects for whatever project is being built. Registration goes through
+//   RegisterAll(), with one Effect<T>(ctor args...) entry per instance; wrap an entry in Disabled() to register it without
+//   enabling it by default. See the factory builder templates in effectfactories.h.
 void LoadEffectFactories()
 {
     // Check if the factories have already been loaded

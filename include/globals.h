@@ -105,6 +105,20 @@ extern std::recursive_mutex g_render_mutex;
 extern std::recursive_mutex g_effect_manager_mutex;
 
 #include <FastLED.h>
+
+// FastLED leaves one more "#pragma GCC diagnostic push" open than it pops (its
+// headers suppress -Wreturn-type and -Wunused-parameter around their own code),
+// so without this every translation unit that includes globals.h - i.e. all of
+// them - compiles with those warnings silently switched off. That is how a
+// non-void function with no return statement got into drawing.cpp unnoticed.
+// Re-arm the one we actually want back; -Wunused-parameter stays off because
+// platformio.ini disables it deliberately. Setting it explicitly rather than
+// popping avoids clobbering unrelated diagnostic state if FastLED ever balances
+// its own pragmas.
+#if defined(__GNUC__)
+#  pragma GCC diagnostic warning "-Wreturn-type"
+#endif
+
 // If we're not using GNU C, (unlikely in embedded, especially in this
 // heavily ESP/Arduino-accented probject) elide __attribute__ - but even
 // clang defines and supports this...

@@ -329,11 +329,11 @@ uint16_t LocalDraw(uint32_t channelMask)
 
 int CalcDelayUntilNextFrame(double frameStartTime, uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
 {
-    constexpr auto kMinDelay = 0.001;
-
     // Delay enough to slow down to the desired framerate
 
 #if MILLIS_PER_FRAME == 0
+
+    constexpr auto kMinDelay = 0.001;
 
     if (localPixelsDrawn > 0)
     {
@@ -391,6 +391,21 @@ int CalcDelayUntilNextFrame(double frameStartTime, uint16_t localPixelsDrawn, ui
     }
 
     return g_Values.FreeDrawTime * MILLIS_PER_SECOND;
+
+#else
+
+    // Fixed cadence: a build that pins MILLIS_PER_FRAME wants every frame to take
+    // that long regardless of what was drawn, so we just sleep off whatever is left
+    // of the period. Bounded at one second like the adaptive path above.
+
+    (void) localPixelsDrawn;
+    (void) wifiPixelsDrawn;
+
+    const double elapsed = std::max(0.0, g_Values.AppTime.CurrentTime() - frameStartTime);
+    g_Values.FreeDrawTime = std::clamp(MILLIS_PER_FRAME / (double) MILLIS_PER_SECOND - elapsed, 0.0, 1.0);
+
+    return g_Values.FreeDrawTime * MILLIS_PER_SECOND;
+
 #endif
 }
 
@@ -525,15 +540,19 @@ void IRAM_ATTR RenderService::Run()
             // The first frame after PowerOff() is special-cased: PostProcessFrame()
             // treats "0 pixels drawn" as nothing to transmit, so the buffer
             // PowerOff() already zeroed would otherwise never reach the physical
-            // strip - it would just keep showing its last real frame. Claiming the
-            // full active LED count for that one frame forces the (already black)
+            // strip - it would just keep showing its last real frame. Reporting a
+            // real (non-zero) count for that one frame forces the (already black)
             // buffer to actually transmit, then subsequent frames go back to 0/idle.
+            // The count has to be the same per-channel figure LocalDraw() reports,
+            // because that is how PostProcessFrame() interprets it - not the
+            // all-channels total from DeviceConfig::GetActiveLEDCount(), which both
+            // over-claims and can wrap the uint16_t on a large multi-channel rig.
 
             auto& effectManager = g_ptrSystem->GetEffectManager();
             if (effectManager.IsPoweredOn())
                 localPixelsDrawn = LocalDraw(ChannelsNeedingLocalDraw());
             else if (effectManager.ConsumePendingBlankFrame())
-                localPixelsDrawn = static_cast<uint16_t>(g_ptrSystem->GetDeviceConfig().GetActiveLEDCount());
+                localPixelsDrawn = static_cast<uint16_t>(effectManager.g().GetLEDCount());
             else
                 localPixelsDrawn = 0;
 

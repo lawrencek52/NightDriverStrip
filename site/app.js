@@ -116,6 +116,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       lastMetricsMs: 0,
       lastBeatSeq: -1,
       beatFlashUntilMs: 0,
+      beatFlashDrawn: false,
       shouldReconnect: false,
       reconnectTimer: null
     },
@@ -2149,13 +2150,17 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       return;
     }
 
-    if (state.audio.dirty) {
+    // Redraw on new telemetry, and also on the frame where the beat flash turns
+    // on or off. Without the second condition the flash is only ever repainted
+    // when a packet happens to arrive, so it lingers past its 150ms window
+    // whenever telemetry pauses.
+    const isBeating = performance.now() < state.audio.beatFlashUntilMs;
+    if (state.audio.dirty || isBeating !== state.audio.beatFlashDrawn) {
       state.audio.dirty = false;
+      state.audio.beatFlashDrawn = isBeating;
       drawAudioFrame();
     }
 
-    // Keep animating while connected so the beat-flash border fades even
-    // between packets, rather than only redrawing on new telemetry.
     state.audio.animationFrameId = window.requestAnimationFrame(runAudioRenderLoop);
   }
 

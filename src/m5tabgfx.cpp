@@ -114,7 +114,7 @@ float M5TabGFX::CaptionTransparency() const
     return 1.0f;
 }
 
-void M5TabGFX::PostProcessFrame(size_t localPixelsDrawn, size_t wifiPixelsDrawn)
+void M5TabGFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
 {
     if (localPixelsDrawn + wifiPixelsDrawn == 0)
         return;
