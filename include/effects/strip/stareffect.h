@@ -37,6 +37,7 @@
 
 #include "particles.h"
 #include "random_utils.h"
+#include "systemcontainer.h"
 
 const int cMaxNewStarsPerFrame = 144;
 const int cMaxStars = 500;
@@ -454,8 +455,13 @@ class StarEffectBase : public EffectWithId<StarEffectBase<StarType, TEffect>>
 
     // Only MusicStar actually consumes beats (see QueueMusicStarsForBeat); other
     // star types read VURatio as an optional speed/probability flourish via
-    // _musicFactor, but render fine with the analyzer silent.
+    // _musicFactor, but render fine with the analyzer silent. MusicStar only exists
+    // when ENABLE_AUDIO is set, so audio-less builds never require audio here.
+    #if ENABLE_AUDIO
     bool RequiresAudio() const override { return std::is_same_v<StarType, MusicStar>; }
+    #else
+    bool RequiresAudio() const override { return false; }
+    #endif
 
     bool SerializeToJSON(JsonObject& jsonObject) override
     {
@@ -481,6 +487,13 @@ class StarEffectBase : public EffectWithId<StarEffectBase<StarType, TEffect>>
         return _starSize;
     }
 
+    // Palette actually used to color new stars. Defaults to the palette supplied at
+    // construction; overridden by GlobalColorStarEffect to track the remote's global color.
+    virtual const CRGBPalette16& EffectivePalette() const
+    {
+        return _palette;
+    }
+
     virtual void Clear()
     {
         LEDStripEffect::setAllOnAllChannels(_skyColor.r, _skyColor.g, _skyColor.b);
@@ -496,7 +509,7 @@ class StarEffectBase : public EffectWithId<StarEffectBase<StarType, TEffect>>
             {
                 while (!_pendingMusicStarColors.empty() && _allParticles.size() < cMaxStars)
                 {
-                    StarType newstar(_palette, _blendType, _maxSpeed * std::max(1.0f, _musicFactor), _starSize);
+                    StarType newstar(EffectivePalette(), _blendType, _maxSpeed * std::max(1.0f, _musicFactor), _starSize);
                     if (_pendingMusicStarColors.front() >= 0)
                         newstar.SetColorIndex(static_cast<uint8_t>(_pendingMusicStarColors.front()));
                     newstar._iPos = (int) random_range(0U, LEDStripEffect::_cLEDs - 1 - starWidth);
@@ -530,7 +543,7 @@ class StarEffectBase : public EffectWithId<StarEffectBase<StarType, TEffect>>
             // Ensure probability is positive before rolling dice
             if (prob > 0.0f && (random_range(0.0f, kProbabilitySpan) < g_Values.AppTime.LastFrameTime() * prob))
             {
-                StarType newstar(_palette, _blendType, _maxSpeed * speedMultiplier, _starSize);
+                StarType newstar(EffectivePalette(), _blendType, _maxSpeed * speedMultiplier, _starSize);
                 // This always starts stars on even pixel boundaries so they look like the desired width if not moving
                 newstar._iPos = (int) random_range(0U, LEDStripEffect::_cLEDs - 1 - starWidth);
                 _allParticles.push_back(newstar);
@@ -620,6 +633,37 @@ class StarEffect : public StarEffectBase<StarType, StarEffect<StarType>>
 {
   public:
     using StarEffectBase<StarType, StarEffect<StarType>>::StarEffectBase;
+};
+
+// GlobalColorStarEffect
+//
+// Identical twinkling behavior to StarEffect, but stars are colored from the device's
+// remote-selected global color (DeviceConfig::GlobalColor()) whenever the remote has one
+// active (DeviceConfig::ApplyGlobalColors()). Falls back to the palette supplied at
+// construction otherwise, so it behaves exactly like StarEffect until a color is pressed.
+template <typename StarType>
+class GlobalColorStarEffect : public StarEffectBase<StarType, GlobalColorStarEffect<StarType>>
+{
+    using Base = StarEffectBase<StarType, GlobalColorStarEffect<StarType>>;
+
+    // Rebuilt lazily each time a star is spawned while a global color is active; mutable
+    // because EffectivePalette() is const but must cache the derived gradient somewhere.
+    mutable CRGBPalette16 _globalColorPalette;
+
+  public:
+    using Base::StarEffectBase;
+
+    const CRGBPalette16& EffectivePalette() const override
+    {
+        auto& deviceConfig = g_ptrSystem->GetDeviceConfig();
+        if (!deviceConfig.ApplyGlobalColors())
+            return Base::_palette;
+
+        const CRGB& color = deviceConfig.GlobalColor();
+        CHSV hsv = rgb2hsv_approximate(color);
+        _globalColorPalette = CRGBPalette16(CRGB::Black, color, CRGB(CHSV(hsv.hue, 200, 255)), CRGB::White);
+        return _globalColorPalette;
+    }
 };
 
 // NightTwinkleEffect
