@@ -447,3 +447,25 @@ The WebSocket endpoint is: `/ws/effectframes`
 <!-- markdownlint-disable MD033 -->
 The payload of the binary event message is an array of RGB color value byte triples, one per LED in the matrix. It matches the `colors` member of the `ColorDataPacket` C++ class, as declared in ledviewer.h and used in the color data server implementation in network.cpp (the `ColorDataTaskEntry()` function, to be specific). <br>Please refer to the source code files mentioned for more information.
 <!-- markdownlint-enable MD033 -->
+
+### Audio telemetry
+
+This WebSocket pushes FFT band peaks, VU levels and beat-detection state from the audio analyzer, so a client (or an external effects controller) can react to audio without polling. It is sent from the audio sampler task on its own cadence (up to `AUDIO_FPS`), independent of the LED frame rate, and only while at least one client is connected. Only present in builds with `ENABLE_AUDIO=1`.
+
+The WebSocket endpoint is: `/ws/audio`
+
+<!-- markdownlint-disable MD033 -->
+The payload of the textual event message is a JSON object: <br>
+
+| Property | Value |
+| - | - |
+| `peaks` | Array of normalized (0..1) per-band FFT peak values, one per configured band (`NUM_BANDS`). |
+| `vu` | Instantaneous VU level. |
+| `vuRatio` | Instantaneous VU ratio (VU relative to the running peak), used to scale beat-reactive visuals. |
+| `vuRatioFade` | Smoothed/decayed version of `vuRatio`. |
+| `beatSeq` | Monotonically increasing sequence number for the last detected beat; compare to the previous value to detect a new beat. |
+| `bpm` | Estimated tempo in beats per minute at the last detected beat. |
+| `beatMajor` | `true` if the last detected beat was classified as a strong/major beat. |
+| `beatConfidence` | Confidence (0..1.5) of the last detected beat. |
+<!-- markdownlint-enable MD033 -->
+

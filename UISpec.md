@@ -561,6 +561,7 @@ The first three app assets may be gzip encoded by firmware. The timezone documen
 - `BUILD_TIMESTAMP` (firmware compile date/time, e.g. `Sep 4 2026 14:32:10`; from `__DATE__`/`__TIME__`, updates every compile)
 - `FRAMES_SOCKET`
 - `EFFECTS_SOCKET`
+- `AUDIO_SOCKET`
 - `CHIP_MODEL`
 - `CHIP_CORES`
 - `CHIP_SPEED`
@@ -894,6 +895,31 @@ The UI throttles canvas rendering to 30 FPS. If more frames arrive, keep the lat
 If the socket closes while `shouldReconnect` is true, reconnect after 1000ms.
 
 If `FRAMES_SOCKET` is false in static stats, clicking Connect should show an error toast instead of opening the socket.
+
+### Audio Telemetry WebSocket
+
+Connect to `/ws/audio` using `ws://` or `wss://` matching the current page protocol.
+
+The socket sends text (JSON) messages, one per audio sampler update, shaped as:
+
+```json
+{
+  "peaks": [0.12, 0.5, 0.9],
+  "vu": 0.4,
+  "vuRatio": 0.8,
+  "vuRatioFade": 0.7,
+  "beatSeq": 42,
+  "bpm": 120.0,
+  "beatMajor": false,
+  "beatConfidence": 0.9
+}
+```
+
+The UI renders `peaks` as a bar spectrum (one bar per array entry, height scaled 0..1) and `vuRatio` as a horizontal meter, and briefly flashes the canvas when `beatSeq` changes from the previously received value.
+
+If the socket closes while `shouldReconnect` is true, reconnect after 1000ms, matching the Frame Preview socket's reconnect behavior.
+
+If `AUDIO_SOCKET` is false in static stats, clicking Connect should show an error toast instead of opening the socket.
 
 ## Rendering Rules
 

@@ -47,6 +47,9 @@
 #include "systemcontainer.h"
 #include "taskmgr.h"     // AUDIO_STACK_SIZE / AUDIO_PRIORITY / AUDIO_CORE
 #include "time_utils.h"  // FPS() — used by Run() to compute audio frame rate
+#if AUDIO_WEB_SOCKET_ENABLED
+#include "websocketserver.h"
+#endif
 
 // ===========================================================================
 // 1. Shared support code (compiled in every build)
@@ -302,6 +305,11 @@ void AudioService::Run()
             : (g_Analyzer.VU() - g_Analyzer.MinVU())
               / std::max(g_Analyzer.PeakVU() - g_Analyzer.MinVU(), (float) MIN_VU)
               * 2.0f);
+
+        #if AUDIO_WEB_SOCKET_ENABLED
+            if (g_ptrSystem->HasWebSocketServer())
+                g_ptrSystem->GetWebSocketServer().SendAudioData(g_Analyzer);
+        #endif
 
         // Yield to share the CPU. We always wait at least kMinFrameDelay so
         // we don't bogart the core even when sampling is fast.

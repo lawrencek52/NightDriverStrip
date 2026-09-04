@@ -358,6 +358,7 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         j["AUDIO_INPUT_MODE"]           = deviceConfig.GetAudioInputModeName();
         j["FRAMES_SOCKET"]              = !!COLORDATA_WEB_SOCKET_ENABLED;
         j["EFFECTS_SOCKET"]             = !!EFFECTS_WEB_SOCKET_ENABLED;
+        j["AUDIO_SOCKET"]               = !!AUDIO_WEB_SOCKET_ENABLED;
         j["CHIP_MODEL"]                 = _staticStats.ChipModel;
         j["CHIP_CORES"]                 = _staticStats.ChipCores;
         j["CHIP_SPEED"]                 = _staticStats.CpuFreqMHz;

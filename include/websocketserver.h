@@ -39,6 +39,7 @@
 
 #include "effectmanager.h"
 #include "iservice.h"
+#include "soundanalyzer.h"
 #include "webserver.h"
 
 // WebSocketServer
@@ -62,6 +63,7 @@ class WebSocketServer : public IEffectEventListener, public IService
 {
     AsyncWebSocket _colorDataSocket;
     AsyncWebSocket _effectChangeSocket;
+    AsyncWebSocket _audioDataSocket;
     CWebServer&    _webServer;
     std::atomic<bool> _running{false};
     static constexpr size_t _maxColorNumberLen = sizeof(NAME_OF(16777215)) - 1; // (uint32_t)CRGB(255,255,255) == 16777215
@@ -72,6 +74,7 @@ public:
     WebSocketServer(CWebServer& webServer) :
         _colorDataSocket("/ws/frames"),
         _effectChangeSocket("/ws/effects"),
+        _audioDataSocket("/ws/audio"),
         _webServer(webServer)
     {
         // Handler registration deferred to Start() so construction is
@@ -100,6 +103,9 @@ public:
         #if EFFECTS_WEB_SOCKET_ENABLED
             _webServer.AddWebSocket(_effectChangeSocket);
         #endif
+        #if AUDIO_WEB_SOCKET_ENABLED
+            _webServer.AddWebSocket(_audioDataSocket);
+        #endif
 
         _running.store(true);
         return true;
@@ -114,12 +120,16 @@ public:
         // handler-removal step.
         _colorDataSocket.closeAll();
         _effectChangeSocket.closeAll();
+        _audioDataSocket.closeAll();
 
         #if COLORDATA_WEB_SOCKET_ENABLED
             _webServer.RemoveWebSocket(_colorDataSocket);
         #endif
         #if EFFECTS_WEB_SOCKET_ENABLED
             _webServer.RemoveWebSocket(_effectChangeSocket);
+        #endif
+        #if AUDIO_WEB_SOCKET_ENABLED
+            _webServer.RemoveWebSocket(_audioDataSocket);
         #endif
 
         _running.store(false);
@@ -132,11 +142,17 @@ public:
     {
         _colorDataSocket.cleanupClients();
         _effectChangeSocket.cleanupClients();
+        _audioDataSocket.cleanupClients();
     }
 
     bool HaveColorDataClients()
     {
         return _colorDataSocket.count() > 0;
+    }
+
+    bool HaveAudioDataClients()
+    {
+        return _audioDataSocket.count() > 0;
     }
 
     // Send the color data for an array of leds of indicated length.
@@ -146,6 +162,32 @@ public:
             return;
 
         _colorDataSocket.binaryAll((uint8_t *)leds, count * sizeof(CRGB));
+    }
+
+    // Send the latest FFT band peaks, VU levels and beat-detection state as a small
+    // JSON packet. Called from the audio task's own sampling loop, so cadence tracks
+    // AUDIO_FPS rather than the LED render/frame-preview rate.
+    void SendAudioData(const ISoundAnalyzer& analyzer)
+    {
+        if (!HaveAudioDataClients() || !_audioDataSocket.availableForWriteAll())
+            return;
+
+        String peaks = "[";
+        const auto& peakData = analyzer.Peaks();
+        for (size_t i = 0; i < peakData.size(); ++i)
+        {
+            if (i)
+                peaks += ',';
+            peaks += String(peakData[i], 3);
+        }
+        peaks += ']';
+
+        const auto beat = analyzer.LastBeat();
+        _audioDataSocket.textAll(str_sprintf(
+            "{\"peaks\":%s,\"vu\":%.3f,\"vuRatio\":%.3f,\"vuRatioFade\":%.3f,"
+            "\"beatSeq\":%lu,\"bpm\":%.1f,\"beatMajor\":%s,\"beatConfidence\":%.2f}",
+            peaks.c_str(), analyzer.VU(), analyzer.VURatio(), analyzer.VURatioFade(),
+            (unsigned long)beat.sequence, beat.bpm, beat.major ? "true" : "false", beat.confidence));
     }
 
     void OnCurrentEffectChanged(size_t currentEffectIndex) override

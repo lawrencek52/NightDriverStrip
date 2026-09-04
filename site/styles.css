@@ -893,6 +893,14 @@ textarea {
   border-radius: 0;
 }
 
+#audioCanvas {
+  max-width: 100%;
+  display: block;
+  background: rgba(4, 10, 22, 0.72);
+  border: 1px solid rgba(74, 222, 255, 0.18);
+  border-radius: 14px;
+}
+
 .effect-name {
   font-weight: 700;
 }

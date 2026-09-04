@@ -106,6 +106,19 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       shouldReconnect: false,
       reconnectTimer: null
     },
+    audio: {
+      socket: null,
+      connected: false,
+      latest: null,
+      dirty: false,
+      animationFrameId: 0,
+      receivedPackets: 0,
+      lastMetricsMs: 0,
+      lastBeatSeq: -1,
+      beatFlashUntilMs: 0,
+      shouldReconnect: false,
+      reconnectTimer: null
+    },
     drag: {
       effectIndex: null,
       dropIndex: null
@@ -140,6 +153,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       "effectsMeta", "effectsTableBody", "channelStrip", "reloadSettingsButton", "applySettingsButton",
       "applySettingsRebootButton", "deviceSettingsForm", "statsTimestamp", "statsBuildInfo", "statsGrid",
       "previewConnectButton", "previewDisconnectButton", "previewStatus", "previewWrap", "previewCanvas",
+      "audioConnectButton", "audioDisconnectButton", "audioStatus", "audioWrap", "audioCanvas",
       "tabEffectsButton", "tabSettingsButton", "tabStatisticsButton",
       "tabEffectsPane", "tabSettingsPane", "tabStatisticsPane", "tabBodyPanel",
       "effectSettingsDialog", "effectDialogTitle", "effectSettingsForm", "closeEffectDialogButton",
@@ -180,6 +194,8 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     });
     els.previewConnectButton.addEventListener("click", connectPreviewSocket);
     els.previewDisconnectButton.addEventListener("click", disconnectPreviewSocket);
+    els.audioConnectButton.addEventListener("click", connectAudioSocket);
+    els.audioDisconnectButton.addEventListener("click", disconnectAudioSocket);
     els.tabEffectsButton.addEventListener("click", () => setActiveTab("effects"));
     els.tabSettingsButton.addEventListener("click", () => setActiveTab("settings"));
     els.tabStatisticsButton.addEventListener("click", () => setActiveTab("statistics"));
@@ -192,6 +208,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     window.addEventListener("resize", () => {
       updateActiveTabCutout();
       drawPreviewFrame();
+      drawAudioFrame();
     });
   }
 
@@ -2011,6 +2028,222 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     stopPreviewRenderLoop();
     els.previewStatus.textContent = "Preview offline";
     refreshPreviewVisibility();
+  }
+
+  function connectAudioSocket() {
+    state.audio.shouldReconnect = true;
+    if (state.audio.reconnectTimer) {
+      window.clearTimeout(state.audio.reconnectTimer);
+      state.audio.reconnectTimer = null;
+    }
+
+    if (state.audio.socket) {
+      return;
+    }
+
+    if (state.staticStats && !state.staticStats.AUDIO_SOCKET) {
+      toast("Audio telemetry socket is not enabled in this build.", "error");
+      return;
+    }
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(`${protocol}//${window.location.host}/ws/audio`);
+    socket.onopen = function () {
+      state.audio.connected = true;
+      resetAudioMetrics();
+      if (state.audio.reconnectTimer) {
+        window.clearTimeout(state.audio.reconnectTimer);
+        state.audio.reconnectTimer = null;
+      }
+      els.audioStatus.textContent = "Audio telemetry connected";
+      toast("Audio telemetry connected.", "success");
+      refreshAudioVisibility();
+    };
+    socket.onclose = function () {
+      state.audio.connected = false;
+      state.audio.socket = null;
+      state.audio.latest = null;
+      state.audio.dirty = false;
+      resetAudioMetrics();
+      stopAudioRenderLoop();
+      els.audioStatus.textContent = state.audio.shouldReconnect ? "Audio telemetry reconnecting..." : "Audio telemetry offline";
+      refreshAudioVisibility();
+      scheduleAudioReconnect();
+    };
+    socket.onerror = function () {
+      console.warn("Audio telemetry socket error");
+    };
+    socket.onmessage = function (event) {
+      try {
+        const packet = JSON.parse(event.data);
+        state.audio.latest = packet;
+        state.audio.receivedPackets += 1;
+        if (packet.beatSeq !== undefined && packet.beatSeq !== state.audio.lastBeatSeq) {
+          state.audio.lastBeatSeq = packet.beatSeq;
+          state.audio.beatFlashUntilMs = performance.now() + 150;
+        }
+        state.audio.dirty = true;
+        updateAudioMetrics();
+        refreshAudioVisibility();
+        ensureAudioRenderLoop();
+      } catch (error) {
+        handleError("Failed to render audio telemetry", error);
+      }
+    };
+    state.audio.socket = socket;
+  }
+
+  function disconnectAudioSocket() {
+    state.audio.shouldReconnect = false;
+    if (state.audio.reconnectTimer) {
+      window.clearTimeout(state.audio.reconnectTimer);
+      state.audio.reconnectTimer = null;
+    }
+    if (state.audio.socket) {
+      state.audio.socket.close();
+      state.audio.socket = null;
+    }
+    state.audio.connected = false;
+    state.audio.latest = null;
+    state.audio.dirty = false;
+    resetAudioMetrics();
+    stopAudioRenderLoop();
+    els.audioStatus.textContent = "Audio telemetry offline";
+    refreshAudioVisibility();
+  }
+
+  function scheduleAudioReconnect() {
+    if (!state.audio.shouldReconnect || state.audio.socket || state.audio.reconnectTimer) {
+      return;
+    }
+
+    state.audio.reconnectTimer = window.setTimeout(function () {
+      state.audio.reconnectTimer = null;
+      if (state.audio.shouldReconnect && !state.audio.socket) {
+        connectAudioSocket();
+      }
+    }, 1000);
+  }
+
+  function ensureAudioRenderLoop() {
+    if (state.audio.animationFrameId) {
+      return;
+    }
+
+    state.audio.animationFrameId = window.requestAnimationFrame(runAudioRenderLoop);
+  }
+
+  function stopAudioRenderLoop() {
+    if (!state.audio.animationFrameId) {
+      return;
+    }
+
+    window.cancelAnimationFrame(state.audio.animationFrameId);
+    state.audio.animationFrameId = 0;
+  }
+
+  function runAudioRenderLoop() {
+    state.audio.animationFrameId = 0;
+
+    if (!state.audio.connected) {
+      return;
+    }
+
+    if (state.audio.dirty) {
+      state.audio.dirty = false;
+      drawAudioFrame();
+    }
+
+    // Keep animating while connected so the beat-flash border fades even
+    // between packets, rather than only redrawing on new telemetry.
+    state.audio.animationFrameId = window.requestAnimationFrame(runAudioRenderLoop);
+  }
+
+  function resetAudioMetrics() {
+    state.audio.receivedPackets = 0;
+    state.audio.lastMetricsMs = performance.now();
+  }
+
+  function updateAudioMetrics() {
+    if (!state.audio.connected) {
+      return;
+    }
+
+    const now = performance.now();
+    const elapsedMs = now - state.audio.lastMetricsMs;
+    if (elapsedMs < 1000) {
+      return;
+    }
+
+    const elapsedSeconds = elapsedMs / 1000;
+    const packetsPerSecond = state.audio.receivedPackets / elapsedSeconds;
+    els.audioStatus.textContent = `Audio telemetry connected - ${packetsPerSecond.toFixed(1)} packets/s`;
+    resetAudioMetrics();
+  }
+
+  function drawAudioFrame() {
+    const packet = state.audio.latest;
+    const canvas = els.audioCanvas;
+    if (!canvas || !packet) {
+      return;
+    }
+
+    refreshAudioVisibility();
+    const dpr = window.devicePixelRatio || 1;
+    const parent = canvas.parentElement;
+    const parentContentWidth = parent ? parent.clientWidth : canvas.clientWidth;
+    const displayWidth = Math.max(1, Math.round(parentContentWidth || 640));
+    const displayHeight = 200;
+    const canvasPixelWidth = Math.max(1, Math.round(displayWidth * dpr));
+    const canvasPixelHeight = Math.max(1, Math.round(displayHeight * dpr));
+    canvas.style.width = `${displayWidth}px`;
+    canvas.style.height = `${displayHeight}px`;
+    if (canvas.width !== canvasPixelWidth) {
+      canvas.width = canvasPixelWidth;
+    }
+    if (canvas.height !== canvasPixelHeight) {
+      canvas.height = canvasPixelHeight;
+    }
+
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
+
+    const isBeating = performance.now() < state.audio.beatFlashUntilMs;
+    if (isBeating) {
+      ctx.fillStyle = "rgba(255, 128, 64, 0.18)";
+      ctx.fillRect(0, 0, displayWidth, displayHeight);
+    }
+
+    // Reserve the bottom strip for the VU meter, the rest for the band spectrum.
+    const vuHeight = 24;
+    const spectrumHeight = displayHeight - vuHeight - 8;
+    const peaks = Array.isArray(packet.peaks) ? packet.peaks : [];
+    if (peaks.length > 0) {
+      const gap = 2;
+      const barWidth = Math.max(1, (displayWidth - gap * (peaks.length - 1)) / peaks.length);
+      peaks.forEach((value, index) => {
+        const level = Math.max(0, Math.min(1, Number(value) || 0));
+        const barHeight = level * spectrumHeight;
+        const x = index * (barWidth + gap);
+        const y = spectrumHeight - barHeight;
+        ctx.fillStyle = isBeating ? "rgb(255, 158, 87)" : "rgb(74, 222, 255)";
+        ctx.fillRect(x, y, barWidth, barHeight);
+      });
+    }
+
+    const vu = Math.max(0, Math.min(2, Number(packet.vuRatio) || 0)) / 2;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+    ctx.fillRect(0, spectrumHeight + 8, displayWidth, vuHeight);
+    ctx.fillStyle = "rgb(57, 255, 136)";
+    ctx.fillRect(0, spectrumHeight + 8, displayWidth * vu, vuHeight);
+  }
+
+  function refreshAudioVisibility() {
+    const hasPacket = !!(state.audio.connected && state.audio.latest);
+    if (els.audioWrap) {
+      els.audioWrap.classList.toggle("is-empty", !hasPacket);
+    }
   }
 
   function schedulePreviewReconnect() {
