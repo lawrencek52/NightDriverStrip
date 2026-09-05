@@ -289,8 +289,8 @@ void PrintOutputHeader()
         debugI("ESP32 PSRAM Init: %s", psramInit() ? "OK" : "FAIL");
     #endif
 
-    debugI("Version %u: Wifi SSID: \"%s\" - ESP32 Free Memory: %zu, PSRAM:%zu, PSRAM Free: %zu",
-            FLASH_VERSION, cszSSID, (size_t)ESP.getFreeHeap(), (size_t)ESP.getPsramSize(), (size_t)ESP.getFreePsram());
+    debugI("Version %u: Wifi SSID: \"%s\" - ESP32 Free Memory: %zu, Internal Free: %zu, PSRAM:%zu, PSRAM Free: %zu",
+            FLASH_VERSION, cszSSID, (size_t)ESP.getFreeHeap(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (size_t)ESP.getPsramSize(), (size_t)ESP.getFreePsram());
     debugI("ESP32 Clock Freq : %lu MHz", (unsigned long)ESP.getCpuFreqMHz());
 }
 
@@ -834,7 +834,7 @@ void loop()
                 strOutput += str_sprintf("WiFi: %s, MAC: %s, IP: %s ", nd_network::WLtoString(nd_network::GetWiFiStatus()), nd_network::GetMacAddress(":").c_str(), nd_network::GetWiFiLocalIP().c_str());
             #endif
 
-            strOutput += str_sprintf("Mem: %zu, LargestBlk: %zu, PSRAM Free: %zu/%zu, ", (size_t)ESP.getFreeHeap(), (size_t)ESP.getMaxAllocHeap(), (size_t)ESP.getFreePsram(), (size_t)ESP.getPsramSize());
+            strOutput += str_sprintf("Mem: %zu, LargestBlk: %zu, InternalFree: %zu, PSRAM Free: %zu/%zu, ", (size_t)ESP.getFreeHeap(), (size_t)ESP.getMaxAllocHeap(), heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (size_t)ESP.getFreePsram(), (size_t)ESP.getPsramSize());
             strOutput += str_sprintf("LED FPS: %lu ", (unsigned long)g_Values.FPS);
 
             #if USE_STRIP
