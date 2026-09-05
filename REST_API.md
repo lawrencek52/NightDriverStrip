@@ -450,7 +450,7 @@ The payload of the binary event message is an array of RGB color value byte trip
 
 ### Audio telemetry
 
-This WebSocket pushes FFT band peaks, VU levels and beat-detection state from the audio analyzer, so a client (or an external effects controller) can react to audio without polling. It is sent from the audio sampler task on its own cadence (up to `AUDIO_FPS`), independent of the LED frame rate, and only while at least one client is connected. Only present in builds with `ENABLE_AUDIO=1`.
+This WebSocket pushes FFT band peaks, raw per-band FFT magnitude, VU levels and beat-detection state from the audio analyzer, so a client (or an external effects controller) can react to audio without polling. It is sent from the audio sampler task on its own cadence (up to `AUDIO_FPS`), independent of the LED frame rate, and only while at least one client is connected. Only present in builds with `ENABLE_AUDIO=1`.
 
 The WebSocket endpoint is: `/ws/audio`
 
@@ -459,7 +459,8 @@ The payload of the textual event message is a JSON object: <br>
 
 | Property | Value |
 | - | - |
-| `peaks` | Array of normalized (0..1) per-band FFT peak values, one per configured band (`NUM_BANDS`). |
+| `peaks` | Array of normalized (0..1) per-band FFT peak values, one per configured band (`NUM_BANDS`). These have noise-floor subtraction, AGC/compression and bass suppression applied - tuned for driving on-device visual effects, not for building an independent meter. |
+| `rawBands` | Array of unprocessed RMS FFT magnitude values, one per band, always `RAW_BAND_COUNT` (16) entries regardless of `NUM_BANDS`. Each entry is the RMS magnitude of the raw FFT output for that frame, grouped into Mel-spaced bands (low to high) that approximate how the ear groups frequencies - no noise-floor subtraction, AGC, bass suppression, or attack/decay smoothing. Values are unbounded (not normalized to 0..1); intended for clients that want to do their own scaling/AGC, e.g. a logarithmic multi-band VU meter. |
 | `vu` | Instantaneous VU level. |
 | `vuRatio` | Instantaneous VU ratio (VU relative to the running peak), used to scale beat-reactive visuals. |
 | `vuRatioFade` | Smoothed/decayed version of `vuRatio`. |

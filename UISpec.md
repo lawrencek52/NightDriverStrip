@@ -905,6 +905,7 @@ The socket sends text (JSON) messages, one per audio sampler update, shaped as:
 ```json
 {
   "peaks": [0.12, 0.5, 0.9],
+  "rawBands": [12.3, 40.1, 88.0, ...],
   "vu": 0.4,
   "vuRatio": 0.8,
   "vuRatioFade": 0.7,
@@ -914,6 +915,8 @@ The socket sends text (JSON) messages, one per audio sampler update, shaped as:
   "beatConfidence": 0.9
 }
 ```
+
+`rawBands` is always 16 entries (Mel-spaced, low to high), independent of how many bars `peaks` has. Unlike `peaks`, it carries no noise-floor subtraction, AGC, or decay smoothing, and its values are unbounded raw FFT magnitude - a client building its own logarithmic multi-band VU meter should read this array and apply its own scaling rather than using `peaks`.
 
 The UI renders `peaks` as a bar spectrum (one bar per array entry, height scaled 0..1) and `vuRatio` as a horizontal meter, and briefly flashes the canvas when `beatSeq` changes from the previously received value.
 

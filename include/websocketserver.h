@@ -164,29 +164,37 @@ public:
         _colorDataSocket.binaryAll((uint8_t *)leds, count * sizeof(CRGB));
     }
 
-    // Send the latest FFT band peaks, VU levels and beat-detection state as a small
-    // JSON packet. Called from the audio task's own sampling loop, so cadence tracks
-    // AUDIO_FPS rather than the LED render/frame-preview rate.
+    // Renders a fixed-precision float array (PeakData, RawBandData, ...) as a JSON array string.
+    template<typename T>
+    static String JsonFloatArray(const T& values, unsigned int decimals = 3)
+    {
+        String s = "[";
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            if (i)
+                s += ',';
+            s += String(values[i], decimals);
+        }
+        s += ']';
+        return s;
+    }
+
+    // Send the latest FFT band peaks, raw per-band FFT magnitude, VU levels and
+    // beat-detection state as a small JSON packet. Called from the audio task's own
+    // sampling loop, so cadence tracks AUDIO_FPS rather than the LED render/frame-preview rate.
     void SendAudioData(const ISoundAnalyzer& analyzer)
     {
         if (!HaveAudioDataClients() || !_audioDataSocket.availableForWriteAll())
             return;
 
-        String peaks = "[";
-        const auto& peakData = analyzer.Peaks();
-        for (size_t i = 0; i < peakData.size(); ++i)
-        {
-            if (i)
-                peaks += ',';
-            peaks += String(peakData[i], 3);
-        }
-        peaks += ']';
+        String peaks = JsonFloatArray(analyzer.Peaks());
+        String rawBands = JsonFloatArray(analyzer.RawBands());
 
         const auto beat = analyzer.LastBeat();
         _audioDataSocket.textAll(str_sprintf(
-            "{\"peaks\":%s,\"vu\":%.3f,\"vuRatio\":%.3f,\"vuRatioFade\":%.3f,"
+            "{\"peaks\":%s,\"rawBands\":%s,\"vu\":%.3f,\"vuRatio\":%.3f,\"vuRatioFade\":%.3f,"
             "\"beatSeq\":%lu,\"bpm\":%.1f,\"beatMajor\":%s,\"beatConfidence\":%.2f}",
-            peaks.c_str(), analyzer.VU(), analyzer.VURatio(), analyzer.VURatioFade(),
+            peaks.c_str(), rawBands.c_str(), analyzer.VU(), analyzer.VURatio(), analyzer.VURatioFade(),
             (unsigned long)beat.sequence, beat.bpm, beat.major ? "true" : "false", beat.confidence));
     }
 

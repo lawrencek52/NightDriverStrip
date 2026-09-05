@@ -98,6 +98,7 @@ SoundAnalyzerBase::SoundAnalyzerBase()
     }
     _oldVU = _oldPeakVU = _oldMinVU = 0.0f;
     ComputeBandLayout();
+    ComputeRawBandLayout();
     Reset();
 }
 
@@ -198,6 +199,7 @@ void SoundAnalyzerBase::ResetFrameState()
     _vPeaks.fill(0.0f);
     _Peaks.fill(0.0f);
     _beatPeaks.fill(0.0f);
+    _rawBands.fill(0.0f);
 }
 
 void SoundAnalyzerBase::ResetBeatDetection()
@@ -282,14 +284,14 @@ void SoundAnalyzerBase::UpdateVU(float newval)
     _oldMinVU = _MinVU;
 }
 
-// ComputeBandLayout
+// ComputeLogMelBandEdges
 //
-// Compute the band layout based on the sampling frequency and number of bands
-//
-// This computes the start and end bins for each band based on the sampling frequency,
-// ensuring that the bands are spaced logarithmically or in Mel scale as configured.
-// The results are stored in _bandBinStart and _bandBinEnd arrays.
-void SoundAnalyzerBase::ComputeBandLayout()
+// Compute the start/end FFT bin for each of N bands, spacing the bands logarithmically
+// or in Mel scale (as configured) across [LOWEST_FREQ, HIGHEST_FREQ]. Shared by
+// ComputeBandLayout() (NUM_BANDS, drives effects) and ComputeRawBandLayout()
+// (RAW_BAND_COUNT, drives raw telemetry) so the frequency-grouping math lives in one place.
+template<size_t N>
+void SoundAnalyzerBase::ComputeLogMelBandEdges(std::array<int, N>& binStart, std::array<int, N>& binEnd)
 {
     const float fMin = LOWEST_FREQ;
     const float fMax = std::min<float>(HIGHEST_FREQ, SAMPLING_FREQUENCY / 2.0f);
@@ -301,11 +303,11 @@ void SoundAnalyzerBase::ComputeBandLayout()
     float melMin = hzToMel(fMin);
     float melMax = hzToMel(fMax);
 #endif
-    for (int b = 0; b < NUM_BANDS; b++)
+    for (size_t b = 0; b < N; b++)
     {
         // Shift the effective band index by kBandOffset so logical band 0 starts higher
-        const int logicalIdx = b + kBandOffset;
-        const float fracHi = (float)(logicalIdx + 1) / (float)(NUM_BANDS + kBandOffset);
+        const int logicalIdx = (int)b + kBandOffset;
+        const float fracHi = (float)(logicalIdx + 1) / (float)((int)N + kBandOffset);
 #if SPECTRUM_BAND_SCALE_MEL
         float edgeMel = melMin + (melMax - melMin) * fracHi;
         float edgeHiFreq = melToHz(edgeMel);
@@ -315,11 +317,56 @@ void SoundAnalyzerBase::ComputeBandLayout()
 #endif
         int hiBin = (int)lroundf(edgeHiFreq / binWidth);
         hiBin = std::clamp(hiBin, prevBin + 1, (int)(MAX_SAMPLES / 2 - 1));
-        _bandBinStart[b] = prevBin;
-        _bandBinEnd[b] = hiBin;
+        binStart[b] = prevBin;
+        binEnd[b] = hiBin;
         prevBin = hiBin;
     }
-    _bandBinEnd[NUM_BANDS - 1] = (MAX_SAMPLES / 2 - 1);
+    binEnd[N - 1] = (int)(MAX_SAMPLES / 2 - 1);
+}
+
+// ComputeBandLayout
+//
+// Compute the effects band layout (NUM_BANDS bands) - see ComputeLogMelBandEdges().
+// Results are stored in _bandBinStart and _bandBinEnd.
+void SoundAnalyzerBase::ComputeBandLayout()
+{
+    ComputeLogMelBandEdges<NUM_BANDS>(_bandBinStart, _bandBinEnd);
+}
+
+// ComputeRawBandLayout
+//
+// Compute the raw-telemetry band layout (RAW_BAND_COUNT bands, independent of the
+// build's NUM_BANDS) - see ComputeLogMelBandEdges(). Results are stored in
+// _rawBandBinStart and _rawBandBinEnd.
+void SoundAnalyzerBase::ComputeRawBandLayout()
+{
+    ComputeLogMelBandEdges<RAW_BAND_COUNT>(_rawBandBinStart, _rawBandBinEnd);
+}
+
+// UpdateRawBands
+//
+// Group this frame's raw FFT magnitude (_vReal, post-FFT) into RAW_BAND_COUNT
+// Mel-spaced bands as plain RMS magnitude - no noise floor subtraction, AGC, bass
+// suppression, or attack/decay smoothing (contrast with ProcessPeaksEnergy(), which
+// applies all of that for on-device visuals). Must run after FFT() and before the
+// next ResetFrameState() zeroes _vReal.
+void SoundAnalyzerBase::UpdateRawBands()
+{
+    for (size_t b = 0; b < RAW_BAND_COUNT; b++)
+    {
+        int start = _rawBandBinStart[b];
+        int end = _rawBandBinEnd[b];
+        if (end <= start)
+        {
+            _rawBands[b] = 0.0f;
+            continue;
+        }
+
+        float sumSquares = std::inner_product(_vReal.begin() + start, _vReal.begin() + end,
+                                               _vReal.begin() + start, 0.0f);
+        int widthBins = end - start;
+        _rawBands[b] = sqrtf(sumSquares / (float)widthBins);
+    }
 }
 
 // BeatEnhance
@@ -729,6 +776,7 @@ void SoundAnalyzerBase::RunSamplerPass()
         ResetFrameState();
         SampleAudio();
         FFT();
+        UpdateRawBands();
         ProcessPeaksEnergy();
     }
     else

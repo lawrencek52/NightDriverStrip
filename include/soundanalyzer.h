@@ -218,6 +218,20 @@ inline constexpr AudioInputParams kParamsPDM
 // Replace previous PeakData class with a direct alias to std::array
 using PeakData = std::array<float, NUM_BANDS>;
 
+// RawBandData
+//
+// Unprocessed per-band FFT magnitude, grouped into a fixed number of Mel/log-spaced
+// bands matching human pitch perception (same grouping approach as PeakData/NUM_BANDS,
+// but independent of it so telemetry consumers get a consistent band count regardless
+// of the build's effects tuning). Unlike PeakData, these values carry none of the
+// noise-floor subtraction, AGC, bass suppression, or attack/decay smoothing that
+// ProcessPeaksEnergy() applies for on-device visuals - just RMS magnitude per band.
+#ifndef RAW_BAND_COUNT
+#define RAW_BAND_COUNT 16
+#endif
+
+using RawBandData = std::array<float, RAW_BAND_COUNT>;
+
 // BeatInfo
 //
 // Beat detection is computed once in the analyzer and published as a compact
@@ -266,6 +280,7 @@ class ISoundAnalyzer
 
     // --- Spectral Data (Bands) ---
     virtual const PeakData & Peaks() const = 0;
+    virtual const RawBandData & RawBands() const = 0;
     virtual float Peak1Decay(int band) const = 0;
     virtual float Peak2Decay(int band) const = 0;
     virtual unsigned long LastPeak1Time(int band) const = 0;
@@ -288,6 +303,7 @@ class ISoundAnalyzer
 class SoundAnalyzer : public ISoundAnalyzer // Non-audio case stub
 {
     PeakData _emptyPeaks; // zero-initialized
+    RawBandData _emptyRawBands{};
     BeatInfo _beatInfo{};
   public:
     float VURatio() const override
@@ -333,6 +349,11 @@ class SoundAnalyzer : public ISoundAnalyzer // Non-audio case stub
     const PeakData &Peaks() const override
     {
         return _emptyPeaks;
+    }
+
+    const RawBandData &RawBands() const override
+    {
+        return _emptyRawBands;
     }
 
     float Peak2Decay(int) const override
@@ -483,6 +504,15 @@ class SoundAnalyzerBase : public ISoundAnalyzer
         return _Peaks;
     }
 
+    // Returns this frame's raw, unprocessed per-band FFT magnitude (RAW_BAND_COUNT
+    // Mel-spaced bands) - no noise floor subtraction, AGC, bass suppression, or
+    // decay smoothing. Intended for external consumers building their own metering
+    // (e.g. a logarithmic VU meter) rather than for on-device visual effects.
+    const RawBandData & RawBands() const override
+    {
+        return _rawBands;
+    }
+
     // Returns the faster-decay overlay level for the given band (0..1).
     // Used by some visuals to draw trailing bars/dots.
     float Peak1Decay(int band) const override;
@@ -592,6 +622,9 @@ class SoundAnalyzerBase : public ISoundAnalyzer
     PeakData _beatPeaks{};             // Beat-only peaks derived before display autoscale/attack limiting
     std::array<int, NUM_BANDS> _bandBinStart{};
     std::array<int, NUM_BANDS> _bandBinEnd{};
+    RawBandData _rawBands{};                    // this frame's raw per-band FFT magnitude (telemetry)
+    std::array<int, RAW_BAND_COUNT> _rawBandBinStart{};
+    std::array<int, RAW_BAND_COUNT> _rawBandBinEnd{};
     float _energyMaxEnv = 0.01f;       // adaptive envelope for autoscaling (start low for fast adaptation)
     std::array<float, NUM_BANDS> _noiseFloor{}; // adaptive per-band noise floor
     std::array<float, NUM_BANDS> _rawPrev{};    // previous raw (noise-subtracted) power for smoothing
@@ -649,6 +682,8 @@ class SoundAnalyzerBase : public ISoundAnalyzer
     void SampleAudio();
     void UpdateVU(float newval);
     void ComputeBandLayout();
+    void ComputeRawBandLayout();
+    void UpdateRawBands();
     void ResetFrameState();
     void ResetBeatDetection();
     void UpdateBeatDetection();
@@ -659,6 +694,13 @@ class SoundAnalyzerBase : public ISoundAnalyzer
     //
     // Calculate a logarithmic scale for the bands like you would find on a graphic equalizer display
     virtual const PeakData & ProcessPeaksEnergy() = 0;
+
+    // Shared Mel/log frequency-to-bin edge computation, parameterized on band count so
+    // ComputeBandLayout() (NUM_BANDS, for effects) and ComputeRawBandLayout()
+    // (RAW_BAND_COUNT, for telemetry) don't duplicate the math. Defined in soundanalyzer.cpp;
+    // only ever instantiated there, so no cross-TU linkage concerns.
+    template<size_t N>
+    static void ComputeLogMelBandEdges(std::array<int, N>& binStart, std::array<int, N>& binEnd);
 
     void InitM5();
     void InitI2S_Modern();

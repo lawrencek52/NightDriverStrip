@@ -97,6 +97,7 @@ namespace
         // source returns the same canonical empty value (and so the per-
         // instance footprint stays at zero).
         const PeakData& Peaks() const override { return EmptyPeaks(); }
+        const RawBandData& RawBands() const override { return EmptyRawBands(); }
         float Peak1Decay(int) const override { return 0.0f; }
         float Peak2Decay(int) const override { return 0.0f; }
         unsigned long LastPeak1Time(int) const override { return 0; }
@@ -113,6 +114,11 @@ namespace
         static const PeakData& EmptyPeaks()
         {
             static const PeakData s_empty{};
+            return s_empty;
+        }
+        static const RawBandData& EmptyRawBands()
+        {
+            static const RawBandData s_empty{};
             return s_empty;
         }
         static const BeatInfo& EmptyBeat()
