@@ -163,6 +163,15 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     device["secondColor"] = SecondColor();
     device["applyGlobalColors"] = ApplyGlobalColors();
 
+    auto schedule = device["schedule"].to<JsonObject>();
+    schedule["enabled"] = ScheduleEnabled();
+    schedule["dimPercent"] = GetScheduleDimPercent();
+    schedule["dimTime"] = GetScheduleDimTime();
+    schedule["offTime"] = GetScheduleOffTime();
+    schedule["onTime"] = GetScheduleOnTime();
+    schedule["latitude"] = GetScheduleLatitude();
+    schedule["longitude"] = GetScheduleLongitude();
+
     auto remote = device["remote"].to<JsonObject>();
     #if ENABLE_REMOTE
     remote["enabled"] = true;
@@ -349,6 +358,7 @@ void DeviceConfig::SerializeUnifiedSettingsSchema(JsonObject root) const
         { "topology",   "Topology",          "Active matrix dimensions and layout." },
         { "output",     "Output",            "LED driver, channel count, color order, and per-channel pin assignments." },
         { "appearance", "Appearance",        "Brightness, colors, effect rotation, and visual preferences." },
+        { "schedule",   "Nightly Schedule",  "Automatic dimming and on/off times, including sunrise/sunset." },
         { "audio",      "Audio",             "Microphone input pin and audio capture configuration." },
         { "location",   "Location",          "Where the device is for weather and timezone defaults." },
         { "clock",      "Clock & Weather",   "Time display, NTP, and weather API options." },
@@ -588,6 +598,61 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
         FieldAccess::AssignIfPresent(device, SecondColorTag, out.secondColor);
         out.clearGlobalColor = device[ClearGlobalColorTag].is<bool>() && device[ClearGlobalColorTag].as<bool>();
         out.applyGlobalColors = device[ApplyGlobalColorsTag].is<bool>() && device[ApplyGlobalColorsTag].as<bool>();
+
+        if (device["schedule"].is<JsonObjectConst>())
+        {
+            auto schedule = device["schedule"].as<JsonObjectConst>();
+
+            FieldAccess::AssignIfPresent(schedule, "enabled", out.scheduleEnabled);
+
+            if (schedule["dimPercent"].is<int>())
+            {
+                const int requestedDimPercent = schedule["dimPercent"].as<int>();
+                auto [isValid, validationMessage] = ValidateScheduleDimPercent(requestedDimPercent);
+                if (!isValid)
+                    return { false, validationMessage };
+
+                out.scheduleDimPercent = requestedDimPercent;
+            }
+
+            struct { const char* key; std::optional<String>& out; } scheduleTimeFields[] = {
+                { "dimTime", out.scheduleDimTime },
+                { "offTime", out.scheduleOffTime },
+                { "onTime",  out.scheduleOnTime },
+            };
+            for (auto& field : scheduleTimeFields)
+            {
+                if (!schedule[field.key].is<String>())
+                    continue;
+
+                const String requestedTime = schedule[field.key].as<String>();
+                auto [isValid, validationMessage] = ValidateScheduleTime(requestedTime);
+                if (!isValid)
+                    return { false, validationMessage };
+
+                field.out = requestedTime;
+            }
+
+            if (schedule["latitude"].is<float>())
+            {
+                const float requestedLatitude = schedule["latitude"].as<float>();
+                auto [isValid, validationMessage] = ValidateScheduleLatitude(requestedLatitude);
+                if (!isValid)
+                    return { false, validationMessage };
+
+                out.scheduleLatitude = requestedLatitude;
+            }
+
+            if (schedule["longitude"].is<float>())
+            {
+                const float requestedLongitude = schedule["longitude"].as<float>();
+                auto [isValid, validationMessage] = ValidateScheduleLongitude(requestedLongitude);
+                if (!isValid)
+                    return { false, validationMessage };
+
+                out.scheduleLongitude = requestedLongitude;
+            }
+        }
     }
 
     return { true, "" };
@@ -608,6 +673,13 @@ SuccessResultWithMessage DeviceConfig::ApplyUnifiedDeviceSettings(const UnifiedS
     FieldAccess::ApplyIfPresent(request.remoteEffectButtonsResetInterval, *this, &DeviceConfig::SetRemoteEffectButtonsResetInterval);
     FieldAccess::ApplyIfPresent(request.powerLimit, *this, &DeviceConfig::SetPowerLimit);
     FieldAccess::ApplyIfPresent(request.brightness, *this, &DeviceConfig::SetBrightness);
+    FieldAccess::ApplyIfPresent(request.scheduleEnabled, *this, &DeviceConfig::SetScheduleEnabled);
+    FieldAccess::ApplyIfPresent(request.scheduleDimPercent, *this, &DeviceConfig::SetScheduleDimPercent);
+    FieldAccess::ApplyIfPresent(request.scheduleDimTime, *this, &DeviceConfig::SetScheduleDimTime);
+    FieldAccess::ApplyIfPresent(request.scheduleOffTime, *this, &DeviceConfig::SetScheduleOffTime);
+    FieldAccess::ApplyIfPresent(request.scheduleOnTime, *this, &DeviceConfig::SetScheduleOnTime);
+    FieldAccess::ApplyIfPresent(request.scheduleLatitude, *this, &DeviceConfig::SetScheduleLatitude);
+    FieldAccess::ApplyIfPresent(request.scheduleLongitude, *this, &DeviceConfig::SetScheduleLongitude);
 
     if (request.audioInputPin.has_value())
     {

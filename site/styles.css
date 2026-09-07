@@ -705,10 +705,16 @@ textarea {
 .color-row,
 .palette-row,
 .slider-row,
-.interval-row {
+.interval-row,
+.time-schedule-row {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.time-schedule-row {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .interval-row {

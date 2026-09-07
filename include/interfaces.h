@@ -367,7 +367,9 @@ struct SettingSpec
         Default,           // type-driven default (Integer -> number input, Boolean -> checkbox, etc.)
         Slider,            // numeric slider; honors DisplayScale and DisplaySuffix
         Select,            // dropdown sourced from inline Options or via OptionsSource
-        IntervalToggle     // boolean-on + numeric value composite (effectInterval-style)
+        IntervalToggle,    // boolean-on + numeric value composite (effectInterval-style)
+        TimeSchedule       // "HH:MM" (15-minute steps) or a symbolic sunrise/sunset/noon/midnight
+                           // token; Options/OptionLabels carry the symbolic choices
     };
 
     // Where the widget gets its option list from when WidgetKind::Select is used.

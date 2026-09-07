@@ -32,6 +32,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <ctime>
 #include <driver/gpio.h>
 #include <HTTPClient.h>
 #include <memory>
@@ -258,6 +260,13 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
     jsonDoc[ShowVUMeterTag] = showVUMeter;
     #endif
     jsonDoc[BrightnessTag] = brightness;
+    jsonDoc[ScheduleEnabledTag] = scheduleEnabled;
+    jsonDoc[ScheduleDimPercentTag] = scheduleDimPercent;
+    jsonDoc[ScheduleDimTimeTag] = scheduleDimTime;
+    jsonDoc[ScheduleOffTimeTag] = scheduleOffTime;
+    jsonDoc[ScheduleOnTimeTag] = scheduleOnTime;
+    jsonDoc[ScheduleLatitudeTag] = scheduleLatitude;
+    jsonDoc[ScheduleLongitudeTag] = scheduleLongitude;
     jsonDoc[GlobalColorTag] = globalColor;
     jsonDoc[ApplyGlobalColorsTag] = applyGlobalColors;
     jsonDoc[SecondColorTag] = secondColor;
@@ -342,6 +351,15 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
     #if SHOW_VU_METER
     SetIfPresentIn(jsonObject, showVUMeter, ShowVUMeterTag);
     #endif
+    SetIfPresentIn(jsonObject, scheduleEnabled, ScheduleEnabledTag);
+    SetIfPresentIn(jsonObject, scheduleDimPercent, ScheduleDimPercentTag);
+    if (scheduleDimPercent > 100)
+        scheduleDimPercent = 30;
+    SetIfPresentIn(jsonObject, scheduleDimTime, ScheduleDimTimeTag);
+    SetIfPresentIn(jsonObject, scheduleOffTime, ScheduleOffTimeTag);
+    SetIfPresentIn(jsonObject, scheduleOnTime, ScheduleOnTimeTag);
+    SetIfPresentIn(jsonObject, scheduleLatitude, ScheduleLatitudeTag);
+    SetIfPresentIn(jsonObject, scheduleLongitude, ScheduleLongitudeTag);
     SetIfPresentIn(jsonObject, globalColor, GlobalColorTag);
     SetIfPresentIn(jsonObject, applyGlobalColors, ApplyGlobalColorsTag);
     SetIfPresentIn(jsonObject, secondColor, SecondColorTag);
@@ -568,6 +586,254 @@ void DeviceConfig::SetShowVUMeter(bool newShowVUMeter)
     #else
     showVUMeter = newShowVUMeter;
     #endif
+}
+
+void DeviceConfig::SetScheduleEnabled(bool newScheduleEnabled)
+{
+    SetAndSave(scheduleEnabled, newScheduleEnabled);
+}
+
+SuccessResultWithMessage DeviceConfig::ValidateScheduleDimPercent(int newScheduleDimPercent)
+{
+    if (newScheduleDimPercent < 0 || newScheduleDimPercent > 100)
+        return { false, "scheduleDimPercent must be between 0 and 100" };
+
+    return { true, "" };
+}
+
+void DeviceConfig::SetScheduleDimPercent(int newScheduleDimPercent)
+{
+    SetAndSave(scheduleDimPercent, uint8_t(std::clamp(newScheduleDimPercent, 0, 100)));
+}
+
+SuccessResultWithMessage DeviceConfig::ValidateScheduleTime(const String& newScheduleTime)
+{
+    if (newScheduleTime == "sunrise" || newScheduleTime == "sunset" ||
+        newScheduleTime == "noon" || newScheduleTime == "midnight")
+        return { true, "" };
+
+    // Otherwise must be "HH:MM", 24-hour, minute on a 15-minute step.
+    const int colon = newScheduleTime.indexOf(':');
+    if (colon < 1 || colon != newScheduleTime.length() - 3)
+        return { false, "schedule time must be \"HH:MM\" or one of sunrise/sunset/noon/midnight" };
+
+    const String hourPart = newScheduleTime.substring(0, colon);
+    const String minutePart = newScheduleTime.substring(colon + 1);
+    if (hourPart.length() == 0 || minutePart.length() != 2)
+        return { false, "schedule time must be \"HH:MM\" or one of sunrise/sunset/noon/midnight" };
+
+    for (size_t i = 0; i < hourPart.length(); i++)
+        if (!isDigit(hourPart[i]))
+            return { false, "schedule time hour must be numeric" };
+    for (size_t i = 0; i < minutePart.length(); i++)
+        if (!isDigit(minutePart[i]))
+            return { false, "schedule time minute must be numeric" };
+
+    const int hour = hourPart.toInt();
+    const int minute = minutePart.toInt();
+    if (hour < 0 || hour > 23)
+        return { false, "schedule time hour must be between 00 and 23" };
+    if (minute % 15 != 0 || minute < 0 || minute > 45)
+        return { false, "schedule time minute must be a 15-minute step (00/15/30/45)" };
+
+    return { true, "" };
+}
+
+void DeviceConfig::SetScheduleDimTime(const String& newScheduleDimTime)
+{
+    SetAndSave(scheduleDimTime, newScheduleDimTime);
+}
+
+void DeviceConfig::SetScheduleOffTime(const String& newScheduleOffTime)
+{
+    SetAndSave(scheduleOffTime, newScheduleOffTime);
+}
+
+void DeviceConfig::SetScheduleOnTime(const String& newScheduleOnTime)
+{
+    SetAndSave(scheduleOnTime, newScheduleOnTime);
+}
+
+SuccessResultWithMessage DeviceConfig::ValidateScheduleLatitude(float newScheduleLatitude)
+{
+    if (newScheduleLatitude < -90.0f || newScheduleLatitude > 90.0f)
+        return { false, "latitude must be between -90 and 90" };
+
+    return { true, "" };
+}
+
+SuccessResultWithMessage DeviceConfig::ValidateScheduleLongitude(float newScheduleLongitude)
+{
+    if (newScheduleLongitude < -180.0f || newScheduleLongitude > 180.0f)
+        return { false, "longitude must be between -180 and 180" };
+
+    return { true, "" };
+}
+
+void DeviceConfig::SetScheduleLatitude(float newScheduleLatitude)
+{
+    SetAndSave(scheduleLatitude, std::clamp(newScheduleLatitude, -90.0f, 90.0f));
+    _cachedSunEventEpochDay = -1;
+}
+
+void DeviceConfig::SetScheduleLongitude(float newScheduleLongitude)
+{
+    SetAndSave(scheduleLongitude, std::clamp(newScheduleLongitude, -180.0f, 180.0f));
+    _cachedSunEventEpochDay = -1;
+}
+
+namespace
+{
+    constexpr double kDegToRad = M_PI / 180.0;
+    constexpr double kRadToDeg = 180.0 / M_PI;
+
+    // Sunrise equation (https://en.wikipedia.org/wiki/Sunrise_equation), accurate to within a
+    // few minutes - plenty for a brightness schedule, and small enough to run once a day on an
+    // ESP32 without pulling in a dedicated astronomy library. longitude is positive East.
+    // Falls back to 06:00/18:00 UTC if the sun doesn't rise/set that day (polar latitudes).
+    void ComputeSunTimesUtcMinutes(float latitudeDeg, float longitudeDeg, time_t nowUtc,
+                                    double& sunriseUtcMinutes, double& sunsetUtcMinutes)
+    {
+        const double julianDate = (double)nowUtc / 86400.0 + 2440587.5;
+        const double meanSolarNoon = std::floor(julianDate - 2451545.0 + 0.0008) - (double)longitudeDeg / 360.0;
+
+        const double solarMeanAnomalyDeg = std::fmod(357.5291 + 0.98560028 * meanSolarNoon, 360.0);
+        const double M = solarMeanAnomalyDeg * kDegToRad;
+
+        const double centerDeg = 1.9148 * std::sin(M) + 0.0200 * std::sin(2 * M) + 0.0003 * std::sin(3 * M);
+        double eclipticLongitudeDeg = std::fmod(solarMeanAnomalyDeg + centerDeg + 180.0 + 102.9372, 360.0);
+        if (eclipticLongitudeDeg < 0)
+            eclipticLongitudeDeg += 360.0;
+        const double lambda = eclipticLongitudeDeg * kDegToRad;
+
+        const double solarTransit = 2451545.0 + meanSolarNoon + 0.0053 * std::sin(M) - 0.0069 * std::sin(2 * lambda);
+        const double declination = std::asin(std::sin(lambda) * std::sin(23.4397 * kDegToRad));
+        const double phi = (double)latitudeDeg * kDegToRad;
+
+        const double cosHourAngle = (std::sin(-0.833 * kDegToRad) - std::sin(phi) * std::sin(declination))
+                                   / (std::cos(phi) * std::cos(declination));
+
+        if (cosHourAngle < -1.0 || cosHourAngle > 1.0)
+        {
+            // Polar day/night: the sun doesn't cross the horizon today at this latitude.
+            sunriseUtcMinutes = 6.0 * 60.0;
+            sunsetUtcMinutes = 18.0 * 60.0;
+            return;
+        }
+
+        const double hourAngleDeg = std::acos(cosHourAngle) * kRadToDeg;
+        const double julianRise = solarTransit - hourAngleDeg / 360.0;
+        const double julianSet = solarTransit + hourAngleDeg / 360.0;
+
+        // A Julian Date's fractional part is 0 at noon UTC, so +0.5 shifts to a
+        // fraction-of-day-since-midnight before scaling to minutes.
+        auto fractionalDayToMinutes = [](double jd)
+        {
+            const double fractionalDay = jd + 0.5 - std::floor(jd + 0.5);
+            return fractionalDay * 1440.0;
+        };
+
+        sunriseUtcMinutes = fractionalDayToMinutes(julianRise);
+        sunsetUtcMinutes = fractionalDayToMinutes(julianSet);
+    }
+}
+
+void DeviceConfig::ComputeSunEvents(float latitude, float longitude, time_t nowUtc,
+                                     uint16_t& sunriseMinutesLocal, uint16_t& sunsetMinutesLocal)
+{
+    double sunriseUtc, sunsetUtc;
+    ComputeSunTimesUtcMinutes(latitude, longitude, nowUtc, sunriseUtc, sunsetUtc);
+
+    // Derive the local wall-clock offset from the currently configured TZ (DST-aware, since
+    // it's read at "now") rather than assuming a fixed UTC offset.
+    struct tm utcTm{};
+    struct tm localTm{};
+    gmtime_r(&nowUtc, &utcTm);
+    localtime_r(&nowUtc, &localTm);
+    const int utcMinutesOfDay = utcTm.tm_hour * 60 + utcTm.tm_min;
+    const int localMinutesOfDay = localTm.tm_hour * 60 + localTm.tm_min;
+    int offsetMinutes = localMinutesOfDay - utcMinutesOfDay;
+    // The two reads are the same instant, so an offset outside +-12h only means the TZ shift
+    // pushed the local date to the next/previous day - normalize back into range.
+    if (offsetMinutes > 720) offsetMinutes -= 1440;
+    if (offsetMinutes < -720) offsetMinutes += 1440;
+
+    auto toLocalMinutes = [&](double utcMinutes)
+    {
+        int m = ((int)std::lround(utcMinutes) + offsetMinutes) % 1440;
+        if (m < 0)
+            m += 1440;
+        return (uint16_t)m;
+    };
+
+    sunriseMinutesLocal = toLocalMinutes(sunriseUtc);
+    sunsetMinutesLocal = toLocalMinutes(sunsetUtc);
+}
+
+void DeviceConfig::EnsureSunEventsCached() const
+{
+    const time_t now = time(nullptr);
+    const int32_t today = (int32_t)(now / 86400);
+    if (today == _cachedSunEventEpochDay)
+        return;
+
+    ComputeSunEvents(scheduleLatitude, scheduleLongitude, now, _cachedSunriseMinutes, _cachedSunsetMinutes);
+    _cachedSunEventEpochDay = today;
+}
+
+uint16_t DeviceConfig::ResolveScheduleMinutes(const String& token) const
+{
+    if (token == "noon")
+        return 12 * 60;
+    if (token == "midnight")
+        return 0;
+    if (token == "sunrise" || token == "sunset")
+    {
+        EnsureSunEventsCached();
+        return token == "sunrise" ? _cachedSunriseMinutes : _cachedSunsetMinutes;
+    }
+
+    // "HH:MM"
+    const int colon = token.indexOf(':');
+    if (colon < 1)
+        return 0;
+
+    const int hour = std::clamp((int)token.substring(0, colon).toInt(), 0, 23);
+    const int minute = std::clamp((int)token.substring(colon + 1).toInt(), 0, 59);
+    return (uint16_t)(hour * 60 + minute);
+}
+
+uint8_t DeviceConfig::GetScheduleDimFactor255() const
+{
+    if (!scheduleEnabled)
+        return 255;
+
+    const uint16_t dimMinutes = ResolveScheduleMinutes(scheduleDimTime);
+    const uint16_t offMinutes = ResolveScheduleMinutes(scheduleOffTime);
+    const uint16_t onMinutes  = ResolveScheduleMinutes(scheduleOnTime);
+
+    struct tm localTm{};
+    const time_t now = time(nullptr);
+    localtime_r(&now, &localTm);
+    const uint16_t nowMinutes = (uint16_t)(localTm.tm_hour * 60 + localTm.tm_min);
+
+    // A typical schedule dims in the evening, goes off after midnight, and comes back on the
+    // next morning - i.e. it straddles the 0/1440 wraparound. Shifting everything by half a day
+    // moves that wraparound to midday instead, where a plain nightly schedule never lands, so
+    // the three thresholds can be compared with simple linear less-than checks.
+    auto shift = [](uint16_t m) { return (uint16_t)(((int)m - 720 + 1440) % 1440); };
+
+    const uint16_t shiftedNow = shift(nowMinutes);
+    const uint16_t shiftedDim = shift(dimMinutes);
+    const uint16_t shiftedOff = shift(offMinutes);
+    const uint16_t shiftedOn  = shift(onMinutes);
+
+    if (shiftedNow < shiftedDim || shiftedNow >= shiftedOn)
+        return 255;
+    if (shiftedNow < shiftedOff)
+        return (uint8_t)std::lround(255.0 * scheduleDimPercent / 100.0);
+
+    return 0;
 }
 
 SuccessResultWithMessage DeviceConfig::ValidatePowerLimit(int newPowerLimit)

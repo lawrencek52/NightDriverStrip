@@ -329,7 +329,10 @@ void WS281xGFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsD
         unscaledPowerMw += EstimateWS281xUnscaledPowerMw(graphics, ledCount);
     }
 
-    uint8_t outputBrightness = deviceConfig.GetBrightness();
+    // The nightly schedule (see DeviceConfig::GetScheduleDimFactor255()) is applied here,
+    // downstream of both local effects and LED-Central frames, so it can't be bypassed by
+    // either source.
+    uint8_t outputBrightness = scale8(deviceConfig.GetBrightness(), deviceConfig.GetScheduleDimFactor255());
     outputBrightness = LimitBrightnessForPower(unscaledPowerMw, outputBrightness, g_Values.Fader, deviceConfig.GetPowerLimit());
     outputManager.Show(g_ptrSystem->GetDevices(), pixelsDrawn, outputBrightness, g_Values.Fader);
 

@@ -918,7 +918,7 @@ The socket sends text (JSON) messages, one per audio sampler update, shaped as:
 
 `rawBands` is always 16 entries (Mel-spaced, low to high), independent of how many bars `peaks` has. Unlike `peaks`, it carries no noise-floor subtraction, AGC, or decay smoothing, and its values are unbounded raw FFT magnitude - a client building its own logarithmic multi-band VU meter should read this array and apply its own scaling rather than using `peaks`.
 
-The UI renders `peaks` as a bar spectrum (one bar per array entry, height scaled 0..1) and `vuRatio` as a horizontal meter, and briefly flashes the canvas when `beatSeq` changes from the previously received value.
+The UI renders `rawBands` as a bar spectrum (one bar per array entry), self-scaling bar height against the min/max seen across all bands over the trailing 15 seconds of received packets (tracked client-side; not a server concept) rather than assuming a fixed range, since raw FFT magnitude can be anywhere from 0 to several million depending on input level. The current min/max of that trailing window is drawn as two compact labels (e.g. "3.45M") below the bar graph. `vuRatio` is rendered as a horizontal meter, and the canvas briefly flashes when `beatSeq` changes from the previously received value.
 
 If the socket closes while `shouldReconnect` is true, reconnect after 1000ms, matching the Frame Preview socket's reconnect behavior.
 

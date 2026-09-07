@@ -226,6 +226,14 @@ class DeviceConfig : public IJSONSerializable
         std::optional<CRGB> secondColor{};
         bool clearGlobalColor = false;
         bool applyGlobalColors = false;
+
+        std::optional<bool> scheduleEnabled{};
+        std::optional<int> scheduleDimPercent{};
+        std::optional<String> scheduleDimTime{};
+        std::optional<String> scheduleOffTime{};
+        std::optional<String> scheduleOnTime{};
+        std::optional<float> scheduleLatitude{};
+        std::optional<float> scheduleLongitude{};
     };
 
   private:
@@ -250,6 +258,34 @@ class DeviceConfig : public IJSONSerializable
     int8_t  audioInputPin = AUDIO_INPUT_PIN;
     RuntimeTopology runtimeTopology = {};
     RuntimeOutputs runtimeOutputs = {};
+
+    // Nightly brightness schedule: dim to scheduleDimPercent at scheduleDimTime, go fully
+    // off at scheduleOffTime, return to normal brightness at scheduleOnTime. Each time is
+    // either "HH:MM" (24-hour, 15-minute steps) or one of "sunrise"/"sunset"/"noon"/"midnight".
+    // Applied as a final multiplier downstream of both local effects and LED-Central frames
+    // (see DeviceConfig::GetScheduleDimFactor255()), so it can't be bypassed by either source.
+    bool    scheduleEnabled = false;
+    uint8_t scheduleDimPercent = 30;
+    String  scheduleDimTime = "23:30";
+    String  scheduleOffTime = "01:30";
+    String  scheduleOnTime = "sunrise";
+    float   scheduleLatitude = 0.0f;
+    float   scheduleLongitude = 0.0f;
+
+    // Sunrise/sunset only change meaningfully once a day; cache the computed local
+    // minutes-of-day so GetScheduleDimFactor255() (called every rendered frame) isn't
+    // redoing trigonometry 30-60 times a second. Mutable because the cache is a pure
+    // memoization of otherwise-const accessors.
+    mutable int32_t _cachedSunEventEpochDay = -1;
+    mutable uint16_t _cachedSunriseMinutes = 6 * 60;
+    mutable uint16_t _cachedSunsetMinutes = 18 * 60;
+
+    void EnsureSunEventsCached() const;
+    static void ComputeSunEvents(float latitude, float longitude, time_t nowUtc,
+                                  uint16_t& sunriseMinutesLocal, uint16_t& sunsetMinutesLocal);
+    // Resolves a schedule time token ("HH:MM" or a symbolic sunrise/sunset/noon/midnight
+    // token) to minutes-of-day in local time.
+    uint16_t ResolveScheduleMinutes(const String& token) const;
 
     std::vector<SettingSpec, psram_allocator<SettingSpec>> settingSpecs;
     std::vector<std::reference_wrapper<SettingSpec>> settingSpecReferences;
@@ -327,6 +363,13 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * WS281xColorOrderTag = "ws281xColorOrder";
     static constexpr const char * APA102ClockPinsTag = "apa102ClockPins";
     static constexpr const char * AudioInputPinTag = NAME_OF(audioInputPin);
+    static constexpr const char * ScheduleEnabledTag = NAME_OF(scheduleEnabled);
+    static constexpr const char * ScheduleDimPercentTag = NAME_OF(scheduleDimPercent);
+    static constexpr const char * ScheduleDimTimeTag = NAME_OF(scheduleDimTime);
+    static constexpr const char * ScheduleOffTimeTag = NAME_OF(scheduleOffTime);
+    static constexpr const char * ScheduleOnTimeTag = NAME_OF(scheduleOnTime);
+    static constexpr const char * ScheduleLatitudeTag = NAME_OF(scheduleLatitude);
+    static constexpr const char * ScheduleLongitudeTag = NAME_OF(scheduleLongitude);
 
     DeviceConfig();
 
@@ -381,6 +424,37 @@ class DeviceConfig : public IJSONSerializable
 
     bool ShowVUMeter() const { return showVUMeter; }
     void SetShowVUMeter(bool newShowVUMeter);
+
+    bool ScheduleEnabled() const { return scheduleEnabled; }
+    void SetScheduleEnabled(bool newScheduleEnabled);
+
+    uint8_t GetScheduleDimPercent() const { return scheduleDimPercent; }
+    static SuccessResultWithMessage ValidateScheduleDimPercent(int newScheduleDimPercent);
+    void SetScheduleDimPercent(int newScheduleDimPercent);
+
+    const String &GetScheduleDimTime() const { return scheduleDimTime; }
+    const String &GetScheduleOffTime() const { return scheduleOffTime; }
+    const String &GetScheduleOnTime() const { return scheduleOnTime; }
+    // Accepts "HH:MM" (24-hour, minute must be 00/15/30/45) or one of
+    // "sunrise"/"sunset"/"noon"/"midnight".
+    static SuccessResultWithMessage ValidateScheduleTime(const String& newScheduleTime);
+    void SetScheduleDimTime(const String& newScheduleDimTime);
+    void SetScheduleOffTime(const String& newScheduleOffTime);
+    void SetScheduleOnTime(const String& newScheduleOnTime);
+
+    float GetScheduleLatitude() const { return scheduleLatitude; }
+    float GetScheduleLongitude() const { return scheduleLongitude; }
+    static SuccessResultWithMessage ValidateScheduleLatitude(float newScheduleLatitude);
+    static SuccessResultWithMessage ValidateScheduleLongitude(float newScheduleLongitude);
+    void SetScheduleLatitude(float newScheduleLatitude);
+    void SetScheduleLongitude(float newScheduleLongitude);
+
+    // Returns the 0-255 multiplier the nightly brightness schedule currently calls for:
+    // 255 (no-op) when disabled or in the normal period, scheduleDimPercent-scaled during
+    // the dim window, and 0 during the off window. Combine with GetBrightness() the same
+    // way g_Values.Fader is combined, at the final pre-transmit brightness step so it
+    // applies to both locally rendered effects and frames received from LED-Central.
+    uint8_t GetScheduleDimFactor255() const;
 
     int GetPowerLimit() const { return powerLimit; }
     static SuccessResultWithMessage ValidatePowerLimit(int newPowerLimit);

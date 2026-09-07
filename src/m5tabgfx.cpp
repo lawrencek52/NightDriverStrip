@@ -120,7 +120,11 @@ void M5TabGFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDr
         return;
 
     const auto &deviceConfig = g_ptrSystem->GetDeviceConfig();
-    const uint8_t brightness = scale8(deviceConfig.GetBrightness(), g_Values.Fader);
+    // The nightly schedule (see DeviceConfig::GetScheduleDimFactor255()) is applied here,
+    // downstream of both local effects and LED-Central frames, so it can't be bypassed by
+    // either source.
+    const uint8_t scheduledBrightness = scale8(deviceConfig.GetBrightness(), deviceConfig.GetScheduleDimFactor255());
+    const uint8_t brightness = scale8(scheduledBrightness, g_Values.Fader);
     if (brightness != _lastBrightness)
     {
         M5.Display.setBrightness(brightness);

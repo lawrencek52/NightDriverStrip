@@ -21,7 +21,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         // Build the table in one allocation. On no-PSRAM boards this metadata
         // is created after the HUB75 DMA buffers, so geometric vector growth
         // can temporarily require both old and new contiguous blocks.
-        constexpr size_t kFixedSettingSpecCapacity = 28;
+        constexpr size_t kFixedSettingSpecCapacity = 35;
         const auto compiledChannelCount = GetCompiledChannelCount();
         // Each compiled channel contributes a per-channel pin spec (two on APA102) plus a
         // per-channel strip-length spec, so budget headroom for both.
@@ -43,6 +43,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         constexpr const char* kSectionAudio      = "audio";
         constexpr const char* kSectionTopology   = "topology";
         constexpr const char* kSectionOutput     = "output";
+        constexpr const char* kSectionSchedule   = "schedule";
 
         // ---- system section ------------------------------------------------
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
@@ -237,6 +238,91 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Type         = SettingSpec::SettingType::Boolean,
             .Section      = kSectionAppearance,
             .ApiPath      = "device.remote.resetEffectInterval"
+        }));
+
+        // ---- schedule section ------------------------------------------------
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = ScheduleEnabledTag,
+            .FriendlyName = "Enable nightly schedule",
+            .Description  = "Automatically dim and turn the display off overnight, and back on in the morning.",
+            .Type         = SettingSpec::SettingType::Boolean,
+            .Section      = kSectionSchedule,
+            .ApiPath      = "device.schedule.enabled"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleDimPercentTag,
+            .FriendlyName  = "Dim to",
+            .Description   = "Brightness percentage to dim to during the dim window, before going fully off.",
+            .Type          = SettingSpec::SettingType::Integer,
+            .HasValidation = true,
+            .MinimumValue  = 0.0,
+            .MaximumValue  = 100.0,
+            .Section       = kSectionSchedule,
+            .ApiPath       = "device.schedule.dimPercent",
+            .Widget        = SettingSpec::WidgetKind::Slider,
+            .DisplayRawMin = 0.0,
+            .DisplayRawMax = 100.0,
+            .DisplayMin    = 0.0,
+            .DisplayMax    = 100.0,
+            .DisplaySuffix = "%"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleDimTimeTag,
+            .FriendlyName  = "Dim time",
+            .Description   = "When the display starts dimming. Pick a clock time (15-minute steps) or a sun-relative event.",
+            .Type          = SettingSpec::SettingType::String,
+            .HasValidation = true,
+            .Section       = kSectionSchedule,
+            .ApiPath       = "device.schedule.dimTime",
+            .Widget        = SettingSpec::WidgetKind::TimeSchedule,
+            .OptionValues  = {"sunrise", "sunset", "noon", "midnight"},
+            .OptionLabels  = {"Sunrise", "Sunset", "Noon", "Midnight"}
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleOffTimeTag,
+            .FriendlyName  = "Off time",
+            .Description   = "When the display turns fully off. Pick a clock time (15-minute steps) or a sun-relative event.",
+            .Type          = SettingSpec::SettingType::String,
+            .HasValidation = true,
+            .Section       = kSectionSchedule,
+            .ApiPath       = "device.schedule.offTime",
+            .Widget        = SettingSpec::WidgetKind::TimeSchedule,
+            .OptionValues  = {"sunrise", "sunset", "noon", "midnight"},
+            .OptionLabels  = {"Sunrise", "Sunset", "Noon", "Midnight"}
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleOnTimeTag,
+            .FriendlyName  = "On time",
+            .Description   = "When the display returns to normal brightness. Pick a clock time (15-minute steps) or a sun-relative event.",
+            .Type          = SettingSpec::SettingType::String,
+            .HasValidation = true,
+            .Section       = kSectionSchedule,
+            .ApiPath       = "device.schedule.onTime",
+            .Widget        = SettingSpec::WidgetKind::TimeSchedule,
+            .OptionValues  = {"sunrise", "sunset", "noon", "midnight"},
+            .OptionLabels  = {"Sunrise", "Sunset", "Noon", "Midnight"}
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleLatitudeTag,
+            .FriendlyName  = "Latitude",
+            .Description   = "Device location latitude in degrees (-90 to 90), used only to compute sunrise/sunset for the schedule above.",
+            .Type          = SettingSpec::SettingType::Float,
+            .HasValidation = true,
+            .MinimumValue  = -90.0,
+            .MaximumValue  = 90.0,
+            .Section       = kSectionSchedule,
+            .ApiPath       = "device.schedule.latitude"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleLongitudeTag,
+            .FriendlyName  = "Longitude",
+            .Description   = "Device location longitude in degrees (-180 to 180), used only to compute sunrise/sunset for the schedule above.",
+            .Type          = SettingSpec::SettingType::Float,
+            .HasValidation = true,
+            .MinimumValue  = -180.0,
+            .MaximumValue  = 180.0,
+            .Section       = kSectionSchedule,
+            .ApiPath       = "device.schedule.longitude"
         }));
 
         // ---- topology section ----------------------------------------------

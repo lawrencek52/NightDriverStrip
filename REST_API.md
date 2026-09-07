@@ -323,6 +323,8 @@ Changes to `topology` and `outputs` are applied as a transaction: the new config
 
 For groups where the response (or schema) reports `liveApply: false`, changes to that group require a reboot before they take effect.
 
+The `device.schedule.*` fields configure a nightly brightness schedule (dim, then fully off, then back on) that is applied as a final multiplier after the active effect renders but before the frame reaches the LEDs. It applies equally to locally rendered effects and to frames received from LED-Central over the socket server - there is no way for either source to bypass it while the schedule is enabled.
+
 | Property | Value | Explanation |
 | - | - | - |
 | URL | `/api/v1/settings` | |
@@ -351,6 +353,13 @@ For groups where the response (or schema) reports `liveApply: false`, changes to
 | | `device.secondColor` | Secondary LED color, as a 24-bit integer. |
 | | `device.applyGlobalColors` | Whether the global/secondary color override is active (`true`/`false`). |
 | | `device.clearGlobalColor` | Set to `true` to clear the current global color override. |
+| | `device.schedule.enabled` | Whether the nightly brightness schedule below is active (`true`/`false`). |
+| | `device.schedule.dimPercent` | Brightness percentage (0-100) to dim to during the dim window, before going fully off. |
+| | `device.schedule.dimTime` | When dimming starts. Either `"HH:MM"` (24-hour, minute must be a 15-minute step: 00/15/30/45) or one of `"sunrise"`/`"sunset"`/`"noon"`/`"midnight"`. |
+| | `device.schedule.offTime` | When the display turns fully off. Same format as `dimTime`. |
+| | `device.schedule.onTime` | When the display returns to normal brightness. Same format as `dimTime`. |
+| | `device.schedule.latitude` | Device latitude in degrees (-90 to 90), used only to compute `sunrise`/`sunset` for the schedule above. |
+| | `device.schedule.longitude` | Device longitude in degrees (-180 to 180), used only to compute `sunrise`/`sunset` for the schedule above. |
 | | `effects.effectInterval` | Duration in milliseconds that each effect runs before the next is activated. |
 | Response | 200 (OK) | A JSON blob with the current unified device settings after applying the changes in the request, in the same format as the GET response. |
 | | 400 (Bad Request) | Validation failed for one or more of the provided values. The applicable message is returned in a JSON blob. |

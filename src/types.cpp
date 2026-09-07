@@ -164,6 +164,7 @@ const char* SettingSpec::WidgetName() const
         case WidgetKind::Slider:           return "slider";
         case WidgetKind::Select:           return "select";
         case WidgetKind::IntervalToggle:   return "intervalToggle";
+        case WidgetKind::TimeSchedule:     return "timeSchedule";
         default:                           return "default";
     }
 }

@@ -182,6 +182,18 @@ bool CWebServer::BuildSettingSpecsJson(String& json, const std::vector<std::refe
                 if (spec.OptionsExternalUrl)
                     options["url"] = spec.OptionsExternalUrl;
             }
+            else if (spec.Widget == SettingSpec::WidgetKind::TimeSchedule && !spec.OptionValues.empty())
+            {
+                // The symbolic sunrise/sunset/noon/midnight choices, alongside the
+                // free-form "HH:MM" clock-time entry the client renders for this widget.
+                auto options = widget["options"].to<JsonObject>();
+                auto valuesArr = options["values"].to<JsonArray>();
+                for (auto entry : spec.OptionValues)
+                    valuesArr.add(entry ? entry : "");
+                auto labelsArr = options["labels"].to<JsonArray>();
+                for (auto entry : spec.OptionLabels)
+                    labelsArr.add(entry ? entry : "");
+            }
         }
     }
 

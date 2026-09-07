@@ -118,7 +118,8 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       beatFlashUntilMs: 0,
       beatFlashDrawn: false,
       shouldReconnect: false,
-      reconnectTimer: null
+      reconnectTimer: null,
+      rangeHistory: []
     },
     drag: {
       effectIndex: null,
@@ -1119,6 +1120,8 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
     if (widgetKind === "intervalToggle") {
       renderIntervalToggleWidget(ctx);
+    } else if (widgetKind === "timeSchedule") {
+      renderTimeScheduleWidget(ctx);
     } else if (widgetKind === "select") {
       renderSelectWidget(ctx);
     } else if (widgetKind === "slider" || (widgetKind === "default" && spec.type === settingType.Slider)) {
@@ -1235,6 +1238,65 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     row.appendChild(switchLabel);
     row.appendChild(verbLabel);
     row.appendChild(valueField);
+    valueWrap.appendChild(row);
+  }
+
+  // Composite "clock time or sun-relative event" widget, used for the nightly
+  // brightness schedule's dim/off/on times. The stored value is a single string:
+  // either "HH:MM" (24-hour, 15-minute steps, from the native time input) or one
+  // of the symbolic tokens in widget.options.values (sunrise/sunset/noon/midnight).
+  function renderTimeScheduleWidget(ctx) {
+    const { widget, valueWrap, currentDraft, readOnly, setDraftValue, setFieldError } = ctx;
+    const symbolicValues = (widget.options && widget.options.values) || [];
+    const symbolicLabels = (widget.options && widget.options.labels) || [];
+    const FIXED_TIME = "__fixed__";
+
+    const row = document.createElement("div");
+    row.className = "time-schedule-row";
+
+    const modeSelect = document.createElement("select");
+    assignControlIdentity(modeSelect, ctx, "mode");
+    const fixedOption = document.createElement("option");
+    fixedOption.value = FIXED_TIME;
+    fixedOption.textContent = "Fixed time";
+    modeSelect.appendChild(fixedOption);
+    symbolicValues.forEach((value, index) => {
+      const optionEl = document.createElement("option");
+      optionEl.value = value;
+      optionEl.textContent = symbolicLabels[index] || value;
+      modeSelect.appendChild(optionEl);
+    });
+
+    const timeInput = document.createElement("input");
+    timeInput.type = "time";
+    timeInput.step = "900";
+    assignControlIdentity(timeInput, ctx, "value");
+
+    const draftString = String(currentDraft || "");
+    const isSymbolic = symbolicValues.includes(draftString);
+    modeSelect.value = isSymbolic ? draftString : FIXED_TIME;
+    timeInput.value = isSymbolic ? "" : (draftString || "00:00");
+    timeInput.hidden = isSymbolic;
+
+    modeSelect.disabled = readOnly;
+    timeInput.disabled = readOnly;
+
+    const sync = () => {
+      if (modeSelect.value === FIXED_TIME) {
+        timeInput.hidden = false;
+        setDraftValue(timeInput.value || "00:00");
+      } else {
+        timeInput.hidden = true;
+        setDraftValue(modeSelect.value);
+      }
+      setFieldError(false, "");
+    };
+
+    modeSelect.addEventListener("change", sync);
+    timeInput.addEventListener("change", sync);
+
+    row.appendChild(modeSelect);
+    row.appendChild(timeInput);
     valueWrap.appendChild(row);
   }
 
@@ -2079,6 +2141,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
         const packet = JSON.parse(event.data);
         state.audio.latest = packet;
         state.audio.receivedPackets += 1;
+        pushRawBandRange(packet.rawBands);
         if (packet.beatSeq !== undefined && packet.beatSeq !== state.audio.lastBeatSeq) {
           state.audio.lastBeatSeq = packet.beatSeq;
           state.audio.beatFlashUntilMs = performance.now() + 150;
@@ -2167,6 +2230,55 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
   function resetAudioMetrics() {
     state.audio.receivedPackets = 0;
     state.audio.lastMetricsMs = performance.now();
+    state.audio.rangeHistory = [];
+  }
+
+  // Tracks each packet's min/max across the RAW_BAND_COUNT rawBands so drawAudioFrame()
+  // can auto-scale the spectrum to whatever range actually occurred in the last 15s,
+  // rather than assuming a fixed range (rawBands is unnormalized raw FFT magnitude).
+  const AUDIO_RANGE_WINDOW_MS = 15000;
+  function pushRawBandRange(rawBands) {
+    if (!Array.isArray(rawBands) || rawBands.length === 0) {
+      return;
+    }
+
+    let bandMin = Infinity;
+    let bandMax = -Infinity;
+    for (let i = 0; i < rawBands.length; i++) {
+      const v = Number(rawBands[i]) || 0;
+      if (v < bandMin) bandMin = v;
+      if (v > bandMax) bandMax = v;
+    }
+
+    const now = performance.now();
+    const history = state.audio.rangeHistory;
+    history.push({ t: now, min: bandMin, max: bandMax });
+
+    const cutoff = now - AUDIO_RANGE_WINDOW_MS;
+    while (history.length > 0 && history[0].t < cutoff) {
+      history.shift();
+    }
+  }
+
+  // Formats a value with a k/M/G suffix at ~3 significant digits, e.g. "3.45M", "12.3M",
+  // "123M" - keeps rawBands' millions-scale magnitudes readable in a fixed-width label.
+  function formatCompactNumber(value) {
+    const n = Number(value) || 0;
+    const sign = n < 0 ? "-" : "";
+    const abs = Math.abs(n);
+    const units = [
+      { v: 1e9, suffix: "G" },
+      { v: 1e6, suffix: "M" },
+      { v: 1e3, suffix: "k" }
+    ];
+    for (const unit of units) {
+      if (abs >= unit.v) {
+        const scaled = abs / unit.v;
+        const decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+        return sign + scaled.toFixed(decimals) + unit.suffix;
+      }
+    }
+    return sign + Math.round(abs).toString();
   }
 
   function updateAudioMetrics() {
@@ -2220,15 +2332,40 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       ctx.fillRect(0, 0, displayWidth, displayHeight);
     }
 
-    // Reserve the bottom strip for the VU meter, the rest for the band spectrum.
+    // Reserve the bottom strip for the VU meter and a range-label row above it,
+    // the rest for the band spectrum.
     const vuHeight = 24;
-    const spectrumHeight = displayHeight - vuHeight - 8;
-    const peaks = Array.isArray(packet.peaks) ? packet.peaks : [];
-    if (peaks.length > 0) {
+    const labelHeight = 14;
+    const smallGap = 4;
+    const spectrumHeight = displayHeight - vuHeight - labelHeight - smallGap * 2;
+    const labelY = spectrumHeight + smallGap;
+    const vuY = labelY + labelHeight + smallGap;
+
+    // rawBands is unnormalized raw FFT magnitude (can be in the millions), so scale
+    // bars against the actual min/max seen over the trailing window rather than a
+    // fixed range.
+    const rawBands = Array.isArray(packet.rawBands) ? packet.rawBands : [];
+    const history = state.audio.rangeHistory;
+    let rangeMin = 0;
+    let rangeMax = 1;
+    if (history.length > 0) {
+      rangeMin = history[0].min;
+      rangeMax = history[0].max;
+      for (const sample of history) {
+        if (sample.min < rangeMin) rangeMin = sample.min;
+        if (sample.max > rangeMax) rangeMax = sample.max;
+      }
+    }
+    if (!(rangeMax > rangeMin)) {
+      rangeMax = rangeMin + 1;
+    }
+
+    if (rawBands.length > 0) {
       const gap = 2;
-      const barWidth = Math.max(1, (displayWidth - gap * (peaks.length - 1)) / peaks.length);
-      peaks.forEach((value, index) => {
-        const level = Math.max(0, Math.min(1, Number(value) || 0));
+      const barWidth = Math.max(1, (displayWidth - gap * (rawBands.length - 1)) / rawBands.length);
+      rawBands.forEach((value, index) => {
+        const v = Number(value) || 0;
+        const level = Math.max(0, Math.min(1, (v - rangeMin) / (rangeMax - rangeMin)));
         const barHeight = level * spectrumHeight;
         const x = index * (barWidth + gap);
         const y = spectrumHeight - barHeight;
@@ -2237,11 +2374,19 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       });
     }
 
+    ctx.fillStyle = "rgba(255, 255, 255, 0.65)";
+    ctx.font = "11px monospace";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText(`min ${formatCompactNumber(rangeMin)}`, 4, labelY + labelHeight / 2);
+    ctx.textAlign = "right";
+    ctx.fillText(`max ${formatCompactNumber(rangeMax)}`, displayWidth - 4, labelY + labelHeight / 2);
+
     const vu = Math.max(0, Math.min(2, Number(packet.vuRatio) || 0)) / 2;
     ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-    ctx.fillRect(0, spectrumHeight + 8, displayWidth, vuHeight);
+    ctx.fillRect(0, vuY, displayWidth, vuHeight);
     ctx.fillStyle = "rgb(57, 255, 136)";
-    ctx.fillRect(0, spectrumHeight + 8, displayWidth * vu, vuHeight);
+    ctx.fillRect(0, vuY, displayWidth * vu, vuHeight);
   }
 
   function refreshAudioVisibility() {

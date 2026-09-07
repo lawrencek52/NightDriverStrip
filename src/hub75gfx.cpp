@@ -222,8 +222,13 @@ void HUB75GFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDr
             g_Values.MatrixScaledBrightness + 1,
             ((g_Values.MatrixScaledBrightness * (kWeightedAverageAmount - 1)) + scaledBrightness) / kWeightedAverageAmount);
 
+    // The nightly schedule (see DeviceConfig::GetScheduleDimFactor255()) is applied here,
+    // downstream of both local effects and LED-Central frames, so it can't be bypassed by
+    // either source.
+    const auto& deviceConfig = g_ptrSystem->GetDeviceConfig();
+    const auto scheduledBrightness = scale8(deviceConfig.GetBrightness(), deviceConfig.GetScheduleDimFactor255());
     const auto targetBrightness = min({
-        g_ptrSystem->GetDeviceConfig().GetBrightness(),
+        scheduledBrightness,
         g_Values.Fader,
         g_Values.MatrixScaledBrightness
     });
