@@ -21,7 +21,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         // Build the table in one allocation. On no-PSRAM boards this metadata
         // is created after the HUB75 DMA buffers, so geometric vector growth
         // can temporarily require both old and new contiguous blocks.
-        constexpr size_t kFixedSettingSpecCapacity = 35;
+        constexpr size_t kFixedSettingSpecCapacity = 36;
         const auto compiledChannelCount = GetCompiledChannelCount();
         // Each compiled channel contributes a per-channel pin spec (two on APA102) plus a
         // per-channel strip-length spec, so budget headroom for both.
@@ -303,9 +303,19 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .OptionLabels  = {"Sunrise", "Sunset", "Noon", "Midnight"}
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = ScheduleLatLongAutoTag,
+            .FriendlyName = "Auto-detect from location",
+            .Description  = "Automatically resolve latitude/longitude from the Location/Country code settings above (needs an Open Weather API key). "
+                            "Turn this off to enter latitude/longitude manually below.",
+            .Type         = SettingSpec::SettingType::Boolean,
+            .Section      = kSectionSchedule,
+            .ApiPath      = "device.schedule.latLongAuto"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name          = ScheduleLatitudeTag,
             .FriendlyName  = "Latitude",
-            .Description   = "Device location latitude in degrees (-90 to 90), used only to compute sunrise/sunset for the schedule above.",
+            .Description   = "Device location latitude in degrees (-90 to 90), used only to compute sunrise/sunset for the schedule above. "
+                            "Ignored (and overwritten) while \"Auto-detect from location\" is on.",
             .Type          = SettingSpec::SettingType::Float,
             .HasValidation = true,
             .MinimumValue  = -90.0,
@@ -316,7 +326,8 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name          = ScheduleLongitudeTag,
             .FriendlyName  = "Longitude",
-            .Description   = "Device location longitude in degrees (-180 to 180), used only to compute sunrise/sunset for the schedule above.",
+            .Description   = "Device location longitude in degrees (-180 to 180), used only to compute sunrise/sunset for the schedule above. "
+                            "Ignored (and overwritten) while \"Auto-detect from location\" is on.",
             .Type          = SettingSpec::SettingType::Float,
             .HasValidation = true,
             .MinimumValue  = -180.0,

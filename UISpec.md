@@ -885,10 +885,12 @@ The socket sends binary frames. Interpret each message as a `Uint8Array` of pack
 - byte 2: blue for pixel 0
 - then repeat
 
-Pixels are row-major with dimensions from:
+When `ACTIVE_LAYOUT` is `"matrix"` (or there's only one active channel), pixels are row-major with dimensions from:
 
 - `ACTIVE_MATRIX_WIDTH` or `CONFIGURED_MATRIX_WIDTH`
 - `ACTIVE_MATRIX_HEIGHT` or `CONFIGURED_MATRIX_HEIGHT`
+
+When `ACTIVE_LAYOUT` is `"individualStrips"` and `ACTIVE_NUM_CHANNELS` is greater than 1, the message instead holds each active channel's LEDs concatenated in channel order - channel 0's `ACTIVE_STRIP_LENGTHS[0]` pixels, then channel 1's, and so on. The UI renders one horizontal bar per channel (stacked vertically), all sharing the same per-LED pixel width scaled to the longest strip, so bar lengths stay comparable.
 
 The UI throttles canvas rendering to 30 FPS. If more frames arrive, keep the latest and render it on the next eligible animation frame.
 

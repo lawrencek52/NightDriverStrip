@@ -191,7 +191,12 @@ uint EffectManager::GetChannelFrameRate(size_t channel) const
     // In shared mode the channel has no instance of its own, so the rate that
     // actually applies is the shared effect's.
     if (!_channelsIndependent || !_channels[channel].effect)
-        return HasCurrentEffect() ? GetCurrentEffect().DesiredFramesPerSecond() : 0;
+    {
+        if (!HasCurrentEffect())
+            return 0;
+        auto& effect = GetCurrentEffect();
+        return effect.HasFrameRateOverride() ? effect.FrameRateOverride() : effect.DesiredFramesPerSecond();
+    }
 
     return EffectiveFrameRate(_channels[channel]);
 }
@@ -210,7 +215,12 @@ size_t EffectManager::GetDesiredFramesPerSecond() const
         return _tempEffect->DesiredFramesPerSecond();
 
     if (!_channelsIndependent)
-        return HasCurrentEffect() ? GetCurrentEffect().DesiredFramesPerSecond() : 0;
+    {
+        if (!HasCurrentEffect())
+            return 0;
+        auto& effect = GetCurrentEffect();
+        return effect.HasFrameRateOverride() ? effect.FrameRateOverride() : effect.DesiredFramesPerSecond();
+    }
 
     size_t fps = 0;
     for (const auto& channel : _channels)

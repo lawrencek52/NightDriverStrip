@@ -1011,6 +1011,13 @@ void IRAM_ATTR ColorStreamerService::Run()
     bool      wsListenersPresent = false;
     auto previewPacket = make_unique_psram<ColorDataPacket>();
 
+    // ColorDataPacket::colors is fixed-size (NUM_LEDS, one channel's worth), so an
+    // individual-strips topology with multiple channels needs a separately allocated,
+    // concatenated buffer to preview every strip over the websocket. Grown on demand;
+    // only used for that one case, so single-channel and matrix builds are unaffected.
+    allocated_unique_ptr<CRGB[]> multiChannelPreviewBuffer;
+    size_t multiChannelPreviewCapacity = 0;
+
     auto &effectManager = g_ptrSystem->GetEffectManager();
 #if COLORDATA_WEB_SOCKET_ENABLED
     auto *webSocketServer =
@@ -1113,7 +1120,40 @@ void IRAM_ATTR ColorStreamerService::Run()
 #if COLORDATA_WEB_SOCKET_ENABLED
                 if (wsListenersPresent)
                 {
-                    webSocketServer->SendColorData(previewPacket->colors, activeLEDCount);
+                    const auto& deviceConfig = g_ptrSystem->GetDeviceConfig();
+                    const size_t channelCount = deviceConfig.GetChannelCount();
+
+                    // Individual-strips with more than one active channel: concatenate every
+                    // channel's own LED buffer (each is independently allocated - see
+                    // SystemContainer::ApplyRuntimeConfiguration - so there's no aliasing to
+                    // worry about) so the web UI can render one bar per strip instead of only
+                    // ever seeing channel 0.
+                    if (deviceConfig.GetLayout() == DeviceConfig::LayoutType::IndividualStrips && channelCount > 1)
+                    {
+                        const size_t totalLEDCount = deviceConfig.GetActiveLEDCount();
+                        if (totalLEDCount > multiChannelPreviewCapacity)
+                        {
+                            multiChannelPreviewBuffer = make_unique_psram<CRGB[]>(totalLEDCount);
+                            multiChannelPreviewCapacity = totalLEDCount;
+                        }
+
+                        if (multiChannelPreviewBuffer)
+                        {
+                            size_t offset = 0;
+                            for (size_t channel = 0; channel < channelCount && offset < totalLEDCount; channel++)
+                            {
+                                auto& channelGraphics = effectManager.g(channel);
+                                const size_t channelLEDCount = std::min<size_t>(channelGraphics.GetLEDCount(), totalLEDCount - offset);
+                                memcpy(multiChannelPreviewBuffer.get() + offset, channelGraphics.leds, sizeof(CRGB) * channelLEDCount);
+                                offset += channelLEDCount;
+                            }
+                            webSocketServer->SendColorData(multiChannelPreviewBuffer.get(), offset);
+                        }
+                    }
+                    else
+                    {
+                        webSocketServer->SendColorData(previewPacket->colors, activeLEDCount);
+                    }
                 }
                 else
 #endif

@@ -1038,6 +1038,10 @@ textarea {
   border: none;
   padding: 0;
   background: transparent;
+  /* The native <dialog> UA stylesheet defaults color to black; without this, text left
+     without an explicit color (e.g. the effect name in #effectDialogTitle) is unreadable
+     against the dark card background. */
+  color: var(--ink);
 }
 
 .editor-dialog::backdrop {

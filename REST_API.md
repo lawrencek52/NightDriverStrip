@@ -358,8 +358,9 @@ The `device.schedule.*` fields configure a nightly brightness schedule (dim, the
 | | `device.schedule.dimTime` | When dimming starts. Either `"HH:MM"` (24-hour, minute must be a 15-minute step: 00/15/30/45) or one of `"sunrise"`/`"sunset"`/`"noon"`/`"midnight"`. |
 | | `device.schedule.offTime` | When the display turns fully off. Same format as `dimTime`. |
 | | `device.schedule.onTime` | When the display returns to normal brightness. Same format as `dimTime`. |
-| | `device.schedule.latitude` | Device latitude in degrees (-90 to 90), used only to compute `sunrise`/`sunset` for the schedule above. |
-| | `device.schedule.longitude` | Device longitude in degrees (-180 to 180), used only to compute `sunrise`/`sunset` for the schedule above. |
+| | `device.schedule.latLongAuto` | Whether latitude/longitude are resolved automatically from `device.location`/`device.countryCode` (via the same OpenWeatherMap geocoding the weather effect uses) whenever they change (`true`/`false`). Defaults to `true`. When `true`, changing `location`, `locationIsZip`, `countryCode`, or setting this to `true` triggers a resolution attempt in the same request; a failed attempt (no API key, no network, unknown location) silently leaves the previous values in place. |
+| | `device.schedule.latitude` | Device latitude in degrees (-90 to 90), used only to compute `sunrise`/`sunset` for the schedule above. Ignored (and overwritten) while `latLongAuto` is `true`. |
+| | `device.schedule.longitude` | Device longitude in degrees (-180 to 180), used only to compute `sunrise`/`sunset` for the schedule above. Ignored (and overwritten) while `latLongAuto` is `true`. |
 | | `effects.effectInterval` | Duration in milliseconds that each effect runs before the next is activated. |
 | Response | 200 (OK) | A JSON blob with the current unified device settings after applying the changes in the request, in the same format as the GET response. |
 | | 400 (Bad Request) | Validation failed for one or more of the provided values. The applicable message is returned in a JSON blob. |

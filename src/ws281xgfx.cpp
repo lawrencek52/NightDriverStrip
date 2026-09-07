@@ -36,6 +36,7 @@
 
 #include "deviceconfig.h"
 #include "effectmanager.h"
+#include "ledstripeffect.h"
 #include "pixelformat.h"
 #include "systemcontainer.h"
 #include "values.h"
@@ -331,8 +332,16 @@ void WS281xGFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsD
 
     // The nightly schedule (see DeviceConfig::GetScheduleDimFactor255()) is applied here,
     // downstream of both local effects and LED-Central frames, so it can't be bypassed by
-    // either source.
+    // either source. The per-effect brightness override, by contrast, is a property of
+    // whichever effect the rotation currently has selected (same "current effect" notion
+    // already used for the title caption above), so it's meaningful only for locally
+    // rendered content.
+    uint8_t effectBrightnessFactor255 = 255;
+    if (effectManager.HasCurrentEffect() && effectManager.GetCurrentEffect().HasBrightnessOverride())
+        effectBrightnessFactor255 = (uint8_t)std::lround(255.0 * effectManager.GetCurrentEffect().BrightnessOverride() / 100.0);
+
     uint8_t outputBrightness = scale8(deviceConfig.GetBrightness(), deviceConfig.GetScheduleDimFactor255());
+    outputBrightness = scale8(outputBrightness, effectBrightnessFactor255);
     outputBrightness = LimitBrightnessForPower(unscaledPowerMw, outputBrightness, g_Values.Fader, deviceConfig.GetPowerLimit());
     outputManager.Show(g_ptrSystem->GetDevices(), pixelsDrawn, outputBrightness, g_Values.Fader);
 

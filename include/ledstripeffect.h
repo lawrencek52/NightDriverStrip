@@ -99,6 +99,10 @@ class LEDStripEffect : public IJSONSerializable
     String _friendlyName;
     bool   _enabled = true;
     size_t _maximumEffectTime = 0;
+    // Per-effect personalization, layered on top of the device's global brightness/schedule
+    // and the effect's own/channel frame rate respectively. 0 means "no override" for both.
+    size_t _brightnessOverride = 0;   // 1-100 (%), applied multiplicatively on top of the global brightness
+    size_t _frameRateOverride = 0;    // 1-120 (fps); a channel-level frame rate override still takes priority
 
     std::vector<std::shared_ptr<GFXBase>> _GFX;
 
@@ -168,6 +172,30 @@ class LEDStripEffect : public IJSONSerializable
     virtual bool HasMaximumEffectTime() const
     {
         return MaximumEffectTime() != 0;
+    }
+
+    // Per-effect brightness override (1-100%), layered multiplicatively on top of the
+    // device's global brightness and nightly schedule while this effect is active.
+    virtual size_t BrightnessOverride() const
+    {
+        return _brightnessOverride;
+    }
+
+    virtual bool HasBrightnessOverride() const
+    {
+        return BrightnessOverride() != 0;
+    }
+
+    // Per-effect frame rate override (1-120fps). A channel-level frame rate override
+    // (EffectManager::SetChannelFrameRate) still takes priority when set.
+    virtual size_t FrameRateOverride() const
+    {
+        return _frameRateOverride;
+    }
+
+    virtual bool HasFrameRateOverride() const
+    {
+        return FrameRateOverride() != 0;
     }
 
     virtual bool ShouldShowTitle() const                    // True if the effect should show the title overlay

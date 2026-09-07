@@ -169,6 +169,7 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     schedule["dimTime"] = GetScheduleDimTime();
     schedule["offTime"] = GetScheduleOffTime();
     schedule["onTime"] = GetScheduleOnTime();
+    schedule["latLongAuto"] = ScheduleLatLongAuto();
     schedule["latitude"] = GetScheduleLatitude();
     schedule["longitude"] = GetScheduleLongitude();
 
@@ -604,6 +605,7 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
             auto schedule = device["schedule"].as<JsonObjectConst>();
 
             FieldAccess::AssignIfPresent(schedule, "enabled", out.scheduleEnabled);
+            FieldAccess::AssignIfPresent(schedule, "latLongAuto", out.scheduleLatLongAuto);
 
             if (schedule["dimPercent"].is<int>())
             {
@@ -680,6 +682,15 @@ SuccessResultWithMessage DeviceConfig::ApplyUnifiedDeviceSettings(const UnifiedS
     FieldAccess::ApplyIfPresent(request.scheduleOnTime, *this, &DeviceConfig::SetScheduleOnTime);
     FieldAccess::ApplyIfPresent(request.scheduleLatitude, *this, &DeviceConfig::SetScheduleLatitude);
     FieldAccess::ApplyIfPresent(request.scheduleLongitude, *this, &DeviceConfig::SetScheduleLongitude);
+    FieldAccess::ApplyIfPresent(request.scheduleLatLongAuto, *this, &DeviceConfig::SetScheduleLatLongAuto);
+
+    // Re-resolve (overwriting any manual lat/long this same request also carried) whenever
+    // auto mode is on and something that could change the result was just touched - not on
+    // every settings save, since each attempt is a blocking HTTP call.
+    const bool scheduleLocationInputsChanged = request.location.has_value() || request.locationIsZip.has_value() ||
+                                                request.countryCode.has_value() || request.scheduleLatLongAuto.has_value();
+    if (scheduleLatLongAuto && scheduleLocationInputsChanged)
+        ResolveScheduleLatLongFromLocation();
 
     if (request.audioInputPin.has_value())
     {

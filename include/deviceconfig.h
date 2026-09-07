@@ -232,6 +232,7 @@ class DeviceConfig : public IJSONSerializable
         std::optional<String> scheduleDimTime{};
         std::optional<String> scheduleOffTime{};
         std::optional<String> scheduleOnTime{};
+        std::optional<bool> scheduleLatLongAuto{};
         std::optional<float> scheduleLatitude{};
         std::optional<float> scheduleLongitude{};
     };
@@ -269,8 +270,19 @@ class DeviceConfig : public IJSONSerializable
     String  scheduleDimTime = "23:30";
     String  scheduleOffTime = "01:30";
     String  scheduleOnTime = "sunrise";
+    // When true (the default), latitude/longitude are resolved automatically from the
+    // location/countryCode settings (same OpenWeatherMap geocoding API PatternWeather
+    // uses) whenever they change. When false, the two fields below are taken as entered.
+    bool    scheduleLatLongAuto = true;
     float   scheduleLatitude = 0.0f;
     float   scheduleLongitude = 0.0f;
+
+    // Best-effort: resolves scheduleLatitude/scheduleLongitude from location/countryCode
+    // via a blocking HTTP GET, mirroring PatternWeather's updateCoordinates(). Only called
+    // from webserver request handlers (see ApplyUnifiedDeviceSettings), which already block
+    // on similar calls (e.g. ValidateOpenWeatherAPIKey) - never call this from a render or
+    // audio task. No-ops (returns false) without WiFi, an API key, or a non-empty location.
+    bool ResolveScheduleLatLongFromLocation();
 
     // Sunrise/sunset only change meaningfully once a day; cache the computed local
     // minutes-of-day so GetScheduleDimFactor255() (called every rendered frame) isn't
@@ -368,6 +380,7 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * ScheduleDimTimeTag = NAME_OF(scheduleDimTime);
     static constexpr const char * ScheduleOffTimeTag = NAME_OF(scheduleOffTime);
     static constexpr const char * ScheduleOnTimeTag = NAME_OF(scheduleOnTime);
+    static constexpr const char * ScheduleLatLongAutoTag = NAME_OF(scheduleLatLongAuto);
     static constexpr const char * ScheduleLatitudeTag = NAME_OF(scheduleLatitude);
     static constexpr const char * ScheduleLongitudeTag = NAME_OF(scheduleLongitude);
 
@@ -441,6 +454,9 @@ class DeviceConfig : public IJSONSerializable
     void SetScheduleDimTime(const String& newScheduleDimTime);
     void SetScheduleOffTime(const String& newScheduleOffTime);
     void SetScheduleOnTime(const String& newScheduleOnTime);
+
+    bool ScheduleLatLongAuto() const { return scheduleLatLongAuto; }
+    void SetScheduleLatLongAuto(bool newScheduleLatLongAuto);
 
     float GetScheduleLatitude() const { return scheduleLatitude; }
     float GetScheduleLongitude() const { return scheduleLongitude; }

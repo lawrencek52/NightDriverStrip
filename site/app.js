@@ -2475,6 +2475,33 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     }
 
     refreshPreviewVisibility();
+
+    // Individual-strips topologies with more than one active channel get a bar per strip
+    // (the frame buffer is each channel's LEDs concatenated in channel order - see
+    // ColorStreamerService::Run() on the device). Everything else (matrix layouts, and
+    // single-channel individual-strips builds) keeps the original width x height render.
+    const layoutInfo = getPreviewLayoutInfo();
+    if (layoutInfo.layout === "individualStrips" && layoutInfo.channelCount > 1) {
+      drawMultiStripPreviewFrame(frame, layoutInfo);
+    } else {
+      drawMatrixPreviewFrame(frame);
+    }
+
+    state.preview.renderedFrames += 1;
+    updatePreviewMetrics();
+  }
+
+  function getPreviewLayoutInfo() {
+    const staticStats = state.staticStats || {};
+    return {
+      layout: String(staticStats.ACTIVE_LAYOUT || "matrix"),
+      channelCount: Math.max(1, Number(staticStats.ACTIVE_NUM_CHANNELS || 1)),
+      stripLengths: Array.isArray(staticStats.ACTIVE_STRIP_LENGTHS) ? staticStats.ACTIVE_STRIP_LENGTHS : []
+    };
+  }
+
+  function drawMatrixPreviewFrame(frame) {
+    const canvas = els.previewCanvas;
     const metrics = getPreviewDisplayMetrics();
     const width = metrics.width;
     const height = metrics.height;
@@ -2514,9 +2541,67 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
         ctx.fillRect(x * metrics.pixelWidth, top, metrics.pixelWidth, metrics.pixelHeight);
       }
     }
+  }
 
-    state.preview.renderedFrames += 1;
-    updatePreviewMetrics();
+  // One horizontal bar per active channel, stacked vertically. Every strip shares the same
+  // per-LED pixel width (scaled to the longest active strip) so bar lengths stay comparable
+  // instead of each row independently stretching to fill the canvas.
+  function drawMultiStripPreviewFrame(frame, layoutInfo) {
+    const canvas = els.previewCanvas;
+    const channelCount = layoutInfo.channelCount;
+    const stripLengths = layoutInfo.stripLengths.slice(0, channelCount).map((n) => Math.max(1, Number(n) || 1));
+    const maxStripLength = Math.max(1, ...stripLengths);
+
+    const dpr = window.devicePixelRatio || 1;
+    const parent = canvas.parentElement;
+    let parentContentWidth = 0;
+    if (parent) {
+      const ps = getComputedStyle(parent);
+      parentContentWidth = parent.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight);
+    }
+    const displayWidth = Math.max(1, Math.round(parentContentWidth || 640));
+    const rowHeight = 18;
+    const rowGap = 3;
+    const displayHeight = channelCount * rowHeight + (channelCount - 1) * rowGap;
+
+    const canvasDisplayWidth = `${displayWidth}px`;
+    const canvasDisplayHeight = `${displayHeight}px`;
+    const canvasPixelWidth = Math.max(1, Math.round(displayWidth * dpr));
+    const canvasPixelHeight = Math.max(1, Math.round(displayHeight * dpr));
+    canvas.classList.remove("preview-canvas-thin");
+    if (canvas.style.width !== canvasDisplayWidth) {
+      canvas.style.width = canvasDisplayWidth;
+    }
+    if (canvas.style.height !== canvasDisplayHeight) {
+      canvas.style.height = canvasDisplayHeight;
+    }
+    if (canvas.width !== canvasPixelWidth) {
+      canvas.width = canvasPixelWidth;
+    }
+    if (canvas.height !== canvasPixelHeight) {
+      canvas.height = canvasPixelHeight;
+    }
+
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
+    ctx.imageSmoothingEnabled = false;
+
+    const pixelWidth = Math.max(1, displayWidth / maxStripLength);
+    let byteOffset = 0;
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      const stripLength = stripLengths[channel];
+      const top = channel * (rowHeight + rowGap);
+      for (let i = 0; i < stripLength; i += 1) {
+        const offset = byteOffset + i * 3;
+        const red = frame[offset] || 0;
+        const green = frame[offset + 1] || 0;
+        const blue = frame[offset + 2] || 0;
+        ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+        ctx.fillRect(i * pixelWidth, top, pixelWidth, rowHeight);
+      }
+      byteOffset += stripLength * 3;
+    }
   }
 
   function getPreviewSerpentine() {

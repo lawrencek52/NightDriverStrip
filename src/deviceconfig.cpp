@@ -265,6 +265,7 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
     jsonDoc[ScheduleDimTimeTag] = scheduleDimTime;
     jsonDoc[ScheduleOffTimeTag] = scheduleOffTime;
     jsonDoc[ScheduleOnTimeTag] = scheduleOnTime;
+    jsonDoc[ScheduleLatLongAutoTag] = scheduleLatLongAuto;
     jsonDoc[ScheduleLatitudeTag] = scheduleLatitude;
     jsonDoc[ScheduleLongitudeTag] = scheduleLongitude;
     jsonDoc[GlobalColorTag] = globalColor;
@@ -358,6 +359,7 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
     SetIfPresentIn(jsonObject, scheduleDimTime, ScheduleDimTimeTag);
     SetIfPresentIn(jsonObject, scheduleOffTime, ScheduleOffTimeTag);
     SetIfPresentIn(jsonObject, scheduleOnTime, ScheduleOnTimeTag);
+    SetIfPresentIn(jsonObject, scheduleLatLongAuto, ScheduleLatLongAutoTag);
     SetIfPresentIn(jsonObject, scheduleLatitude, ScheduleLatitudeTag);
     SetIfPresentIn(jsonObject, scheduleLongitude, ScheduleLongitudeTag);
     SetIfPresentIn(jsonObject, globalColor, GlobalColorTag);
@@ -652,6 +654,11 @@ void DeviceConfig::SetScheduleOffTime(const String& newScheduleOffTime)
 void DeviceConfig::SetScheduleOnTime(const String& newScheduleOnTime)
 {
     SetAndSave(scheduleOnTime, newScheduleOnTime);
+}
+
+void DeviceConfig::SetScheduleLatLongAuto(bool newScheduleLatLongAuto)
+{
+    SetAndSave(scheduleLatLongAuto, newScheduleLatLongAuto);
 }
 
 SuccessResultWithMessage DeviceConfig::ValidateScheduleLatitude(float newScheduleLatitude)
@@ -992,5 +999,55 @@ SuccessResultWithMessage DeviceConfig::ValidateOpenWeatherAPIKey(const String &n
             return { false, "Unable to validate" };
         }
     }
+}
+
+// ResolveScheduleLatLongFromLocation
+//
+// Mirrors PatternWeather::updateCoordinates() - same OpenWeatherMap geocoding endpoints,
+// same request shape - but writes the result into the schedule's lat/long instead of an
+// effect-local cache. Best-effort: any failure (no key, no network, bad location) just
+// leaves the existing scheduleLatitude/scheduleLongitude in place.
+bool DeviceConfig::ResolveScheduleLatLongFromLocation()
+{
+    if (location.isEmpty() || openWeatherApiKey.isEmpty())
+        return false;
+
+    HTTPClient http;
+    String url;
+    if (locationIsZip)
+        url = "http://api.openweathermap.org/geo/1.0/zip"
+            "?zip=" + urlEncode(location) + "," + urlEncode(countryCode) + "&appid=" + urlEncode(openWeatherApiKey);
+    else
+        url = "http://api.openweathermap.org/geo/1.0/direct"
+            "?q=" + urlEncode(location) + "," + urlEncode(countryCode) + "&limit=1&appid=" + urlEncode(openWeatherApiKey);
+
+    http.begin(url);
+    const int httpResponseCode = http.GET();
+    if (httpResponseCode != HTTP_CODE_OK)
+    {
+        debugW("ResolveScheduleLatLongFromLocation: geocoding request for '%s' failed (HTTP %d)", location.c_str(), httpResponseCode);
+        http.end();
+        return false;
+    }
+
+    auto doc = CreateJsonDocument();
+    deserializeJson(doc, http.getString());
+    JsonObject coordinates = locationIsZip ? doc.as<JsonObject>() : doc[0].as<JsonObject>();
+    http.end();
+
+    if (!coordinates["lat"].is<float>() || !coordinates["lon"].is<float>())
+    {
+        debugW("ResolveScheduleLatLongFromLocation: no coordinates found for '%s'", location.c_str());
+        return false;
+    }
+
+    SetScheduleLatitude(coordinates["lat"].as<float>());
+    SetScheduleLongitude(coordinates["lon"].as<float>());
+    return true;
+}
+#else
+bool DeviceConfig::ResolveScheduleLatLongFromLocation()
+{
+    return false;
 }
 #endif  // ENABLE_WIFI

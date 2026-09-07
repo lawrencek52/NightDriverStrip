@@ -224,9 +224,15 @@ void HUB75GFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDr
 
     // The nightly schedule (see DeviceConfig::GetScheduleDimFactor255()) is applied here,
     // downstream of both local effects and LED-Central frames, so it can't be bypassed by
-    // either source.
+    // either source. The per-effect brightness override is a property of whichever effect
+    // the rotation currently has selected (same "current effect" notion as showCaption
+    // above), so it's meaningful only for locally rendered content.
     const auto& deviceConfig = g_ptrSystem->GetDeviceConfig();
-    const auto scheduledBrightness = scale8(deviceConfig.GetBrightness(), deviceConfig.GetScheduleDimFactor255());
+    uint8_t effectBrightnessFactor255 = 255;
+    if (effectManager.HasCurrentEffect() && effectManager.GetCurrentEffect().HasBrightnessOverride())
+        effectBrightnessFactor255 = (uint8_t)std::lround(255.0 * effectManager.GetCurrentEffect().BrightnessOverride() / 100.0);
+
+    const auto scheduledBrightness = scale8(scale8(deviceConfig.GetBrightness(), deviceConfig.GetScheduleDimFactor255()), effectBrightnessFactor255);
     const auto targetBrightness = min({
         scheduledBrightness,
         g_Values.Fader,

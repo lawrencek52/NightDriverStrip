@@ -87,6 +87,54 @@ void LEDStripEffect::FillBaseSettingSpecs()
         .Type         = SettingSpec::SettingType::Boolean,
         .Access       = SettingSpec::SettingAccess::WriteOnly
     }));
+    _baseSettingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+        .Name          = ACTUAL_NAME_OF(_brightnessOverride),
+        .FriendlyName  = "Brightness override",
+        .Description   = "Per-effect brightness percentage (1-100), applied on top of the device's global brightness "
+                        "and nightly schedule while this effect is active. 0 means no override.",
+        .Type          = SettingSpec::SettingType::Integer,
+        .HasValidation = true,
+        .MinimumValue  = 0.0,
+        .MaximumValue  = 100.0
+    }));
+    _baseSettingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+        .Name         = "hasBrightnessOverride",
+        .FriendlyName = "Has brightness override set",
+        .Description  = "Indicates if the effect has a brightness override set.",
+        .Type         = SettingSpec::SettingType::Boolean,
+        .Access       = SettingSpec::SettingAccess::ReadOnly
+    }));
+    _baseSettingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+        .Name         = "clearBrightnessOverride",
+        .FriendlyName = "Clear brightness override",
+        .Description  = "Clear the brightness override. Set to true to go back to using the global brightness.",
+        .Type         = SettingSpec::SettingType::Boolean,
+        .Access       = SettingSpec::SettingAccess::WriteOnly
+    }));
+    _baseSettingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+        .Name          = ACTUAL_NAME_OF(_frameRateOverride),
+        .FriendlyName  = "Frame rate override",
+        .Description   = "Fixed frames-per-second for this effect (1-120), overriding its own default rate. A "
+                        "channel-level frame rate override, if set, still takes priority. 0 means no override.",
+        .Type          = SettingSpec::SettingType::Integer,
+        .HasValidation = true,
+        .MinimumValue  = 0.0,
+        .MaximumValue  = 120.0
+    }));
+    _baseSettingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+        .Name         = "hasFrameRateOverride",
+        .FriendlyName = "Has frame rate override set",
+        .Description  = "Indicates if the effect has a frame rate override set.",
+        .Type         = SettingSpec::SettingType::Boolean,
+        .Access       = SettingSpec::SettingAccess::ReadOnly
+    }));
+    _baseSettingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+        .Name         = "clearFrameRateOverride",
+        .FriendlyName = "Clear frame rate override",
+        .Description  = "Clear the frame rate override. Set to true to go back to the effect's own default frame rate.",
+        .Type         = SettingSpec::SettingType::Boolean,
+        .Access       = SettingSpec::SettingAccess::WriteOnly
+    }));
 }
 
 // LEDStripEffect
@@ -108,6 +156,10 @@ LEDStripEffect::LEDStripEffect(const JsonObjectConst&  jsonObject)
         _enabled = jsonObject["es"].as<int>() == 1;
     if (jsonObject["mt"].is<size_t>())
         _maximumEffectTime = jsonObject["mt"];
+    if (jsonObject["bo"].is<size_t>())
+        _brightnessOverride = jsonObject["bo"];
+    if (jsonObject["fo"].is<size_t>())
+        _frameRateOverride = jsonObject["fo"];
 
     // Pull the migrations bitmap from the JSON object if it has one, otherwise default to "nothing set"
     uint performedMigrations = 0;
@@ -422,6 +474,10 @@ bool LEDStripEffect::SerializeToJSON(JsonObject& jsonObject)
     // Only add the max effect time and core effect flag if they're not the default, to save space
     if (HasMaximumEffectTime())
         jsonDoc["mt"]           = _maximumEffectTime;
+    if (HasBrightnessOverride())
+        jsonDoc["bo"]           = _brightnessOverride;
+    if (HasFrameRateOverride())
+        jsonDoc["fo"]           = _frameRateOverride;
     if (_coreEffect)
         jsonDoc[PTY_COREEFFECT] = 1;
 
@@ -477,6 +533,10 @@ bool LEDStripEffect::SerializeSettingsToJSON(JsonObject& jsonObject)
     jsonDoc[ACTUAL_NAME_OF(_friendlyName)] = _friendlyName;
     jsonDoc[ACTUAL_NAME_OF(_maximumEffectTime)] = _maximumEffectTime;
     jsonDoc["hasMaximumEffectTime"] = HasMaximumEffectTime();
+    jsonDoc[ACTUAL_NAME_OF(_brightnessOverride)] = _brightnessOverride;
+    jsonDoc["hasBrightnessOverride"] = HasBrightnessOverride();
+    jsonDoc[ACTUAL_NAME_OF(_frameRateOverride)] = _frameRateOverride;
+    jsonDoc["hasFrameRateOverride"] = HasFrameRateOverride();
 
     return SetIfNotOverflowed(jsonDoc, jsonObject, __PRETTY_FUNCTION__);
 }
@@ -497,6 +557,36 @@ bool LEDStripEffect::SetSetting(const String& name, const String& value)
     {
         if (clearMaximumEffectTime)
             _maximumEffectTime = 0;
+
+        return true;
+    }
+
+    if (FieldAccess::AssignIfSelected(name, ACTUAL_NAME_OF(_brightnessOverride), _brightnessOverride, value))
+    {
+        _brightnessOverride = std::clamp<size_t>(_brightnessOverride, 0, 100);
+        return true;
+    }
+
+    bool clearBrightnessOverride = false;
+    if (FieldAccess::AssignIfSelected(name, "clearBrightnessOverride", clearBrightnessOverride, value))
+    {
+        if (clearBrightnessOverride)
+            _brightnessOverride = 0;
+
+        return true;
+    }
+
+    if (FieldAccess::AssignIfSelected(name, ACTUAL_NAME_OF(_frameRateOverride), _frameRateOverride, value))
+    {
+        _frameRateOverride = std::clamp<size_t>(_frameRateOverride, 0, 120);
+        return true;
+    }
+
+    bool clearFrameRateOverride = false;
+    if (FieldAccess::AssignIfSelected(name, "clearFrameRateOverride", clearFrameRateOverride, value))
+    {
+        if (clearFrameRateOverride)
+            _frameRateOverride = 0;
 
         return true;
     }

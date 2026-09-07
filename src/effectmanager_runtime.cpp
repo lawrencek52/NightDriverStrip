@@ -426,10 +426,16 @@ void EffectManager::ClearChannelWhites(const ChannelPlayback& channel)
 
 uint EffectManager::EffectiveFrameRate(const ChannelPlayback& channel)
 {
+    // Precedence: an explicit channel-level override (POST /channelFrameRate) wins, since
+    // it's a deliberate runtime choice; otherwise fall back to the effect's own persisted
+    // frame rate override (a personalization setting), then the effect's default rate.
     if (channel.fpsOverride > 0)
         return channel.fpsOverride;
 
-    return channel.effect ? channel.effect->DesiredFramesPerSecond() : 0;
+    if (!channel.effect)
+        return 0;
+
+    return channel.effect->HasFrameRateOverride() ? channel.effect->FrameRateOverride() : channel.effect->DesiredFramesPerSecond();
 }
 
 std::shared_ptr<LEDStripEffect> EffectManager::MakeChannelEffect(size_t channel, size_t index)
