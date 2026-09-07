@@ -136,12 +136,14 @@ class SocketServer : public ITaskService
 {
 private:
 
-    // One sender per output channel is the expected case, plus headroom for a
-    // client that is reconnecting before its previous socket has been reaped.
-    // Capped well below CONFIG_LWIP_MAX_SOCKETS (16 on the S3) so the web
-    // server, OTA and the color data server keep their own descriptors.
+    // One sender per output channel is the expected case, plus headroom for
+    // clients that are reconnecting before their previous socket has been
+    // reaped (NUM_CHANNELS + 4, so up to four strips can all be mid-reconnect
+    // at once without exhausting slots). Capped well below
+    // CONFIG_LWIP_MAX_SOCKETS (16 on the S3) so the web server, OTA and the
+    // color data server keep their own descriptors.
 
-    static constexpr size_t MAX_CLIENTS = (NUM_CHANNELS + 2) > 8 ? 8 : (NUM_CHANNELS + 2);
+    static constexpr size_t MAX_CLIENTS = (NUM_CHANNELS + 4) > 12 ? 12 : (NUM_CHANNELS + 4);
 
     // A client that has gone quiet for this long is dropped, so a wedged sender
     // - or one that vanished without a FIN - can't hold a slot indefinitely.
