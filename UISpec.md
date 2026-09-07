@@ -778,6 +778,14 @@ Select option sources:
 - `device.applyGlobalColors`
 - `device.clearGlobalColor`
 - `device.rememberCurrentEffect`
+- `device.schedule.enabled`
+- `device.schedule.dimPercent`
+- `device.schedule.dimTime`
+- `device.schedule.offTime`
+- `device.schedule.onTime`
+- `device.schedule.latLongAuto`
+- `device.schedule.latitude`
+- `device.schedule.longitude`
 - `topology.width`
 - `topology.height`
 - `topology.serpentine`
@@ -788,6 +796,8 @@ Select option sources:
 - `effects.effectInterval`
 
 When posting array element paths like `outputs.ws281x.pins[2]`, the UI must seed the outgoing array with the current full array from `state.unifiedSettings` before changing the indexed element. This prevents sparse arrays from clearing other pins.
+
+Two read-only diagnostic fields ride along in the GET/POST response but are never posted: `device.openWeatherApiKeySet` (boolean - whether an API key is currently configured, since the key itself is write-only) and `device.schedule.latLongStatus` (string - the outcome of the most recent lat/long auto-detect attempt, surfaced as a read-only setting so a failure isn't silent).
 
 `GET /api/v1/settings/schema` returns schema/support metadata:
 
@@ -1339,7 +1349,7 @@ Notable settings:
 - 24-hour clock: boolean, path `device.use24HourClock`.
 - Celsius: boolean, path `device.useCelsius`.
 - NTP server: string, path `device.ntpServer`.
-- Open Weather API key: write-only string with validation, path `device.openWeatherApiKey`.
+- Open Weather API key: write-only string with validation, `secret` widget, path `device.openWeatherApiKey`. The value is never sent back to the browser; `device.openWeatherApiKeySet` (boolean) tells the UI whether one is currently configured, so the `secret` widget can show a masked placeholder ("leave blank to keep current key") instead of a blank field that looks unconfigured. Submitting the field empty leaves the stored key unchanged.
 - Audio input pin: integer, min -1, max 48, may require reboot, path `device.audioInputPin`.
 - Brightness: integer slider, raw brightness range displayed as 5..100%, path `device.brightness`.
 - Global color: color integer, path `device.globalColor`.

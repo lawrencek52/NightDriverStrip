@@ -277,6 +277,12 @@ class DeviceConfig : public IJSONSerializable
     float   scheduleLatitude = 0.0f;
     float   scheduleLongitude = 0.0f;
 
+    // Human-readable outcome of the most recent ResolveScheduleLatLongFromLocation() attempt
+    // (empty until the first attempt). Not persisted - purely a live diagnostic surfaced
+    // through the unified settings read, since a failed auto-detect otherwise fails silently
+    // (the previous lat/long is deliberately left in place rather than blocking the save).
+    String scheduleLatLongStatus = "";
+
     // Best-effort: resolves scheduleLatitude/scheduleLongitude from location/countryCode
     // via a blocking HTTP GET, mirroring PatternWeather's updateCoordinates(). Only called
     // from webserver request handlers (see ApplyUnifiedDeviceSettings), which already block
@@ -460,6 +466,7 @@ class DeviceConfig : public IJSONSerializable
 
     float GetScheduleLatitude() const { return scheduleLatitude; }
     float GetScheduleLongitude() const { return scheduleLongitude; }
+    const String &GetScheduleLatLongStatus() const { return scheduleLatLongStatus; }
     static SuccessResultWithMessage ValidateScheduleLatitude(float newScheduleLatitude);
     static SuccessResultWithMessage ValidateScheduleLongitude(float newScheduleLongitude);
     void SetScheduleLatitude(float newScheduleLatitude);

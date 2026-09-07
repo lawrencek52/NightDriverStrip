@@ -165,6 +165,7 @@ const char* SettingSpec::WidgetName() const
         case WidgetKind::Select:           return "select";
         case WidgetKind::IntervalToggle:   return "intervalToggle";
         case WidgetKind::TimeSchedule:     return "timeSchedule";
+        case WidgetKind::Secret:           return "secret";
         default:                           return "default";
     }
 }

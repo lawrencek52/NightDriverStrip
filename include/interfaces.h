@@ -368,8 +368,11 @@ struct SettingSpec
         Slider,            // numeric slider; honors DisplayScale and DisplaySuffix
         Select,            // dropdown sourced from inline Options or via OptionsSource
         IntervalToggle,    // boolean-on + numeric value composite (effectInterval-style)
-        TimeSchedule       // "HH:MM" (15-minute steps) or a symbolic sunrise/sunset/noon/midnight
+        TimeSchedule,      // "HH:MM" (15-minute steps) or a symbolic sunrise/sunset/noon/midnight
                            // token; Options/OptionLabels carry the symbolic choices
+        Secret             // write-only value (e.g. an API key); the UI shows a masked
+                           // placeholder when "<ApiPath>Set" is true rather than a blank field,
+                           // and never round-trips the actual value
     };
 
     // Where the widget gets its option list from when WidgetKind::Select is used.

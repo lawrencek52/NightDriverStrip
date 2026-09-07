@@ -1122,6 +1122,8 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       renderIntervalToggleWidget(ctx);
     } else if (widgetKind === "timeSchedule") {
       renderTimeScheduleWidget(ctx);
+    } else if (widgetKind === "secret") {
+      renderSecretWidget(ctx);
     } else if (widgetKind === "select") {
       renderSelectWidget(ctx);
     } else if (widgetKind === "slider" || (widgetKind === "default" && spec.type === settingType.Slider)) {
@@ -1298,6 +1300,32 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     row.appendChild(modeSelect);
     row.appendChild(timeInput);
     valueWrap.appendChild(row);
+  }
+
+  // Write-only value (e.g. an API key). The real value is never sent back from the server,
+  // so the field always starts empty; a companion "<apiPath>Set" boolean (by convention -
+  // see DeviceConfig::SerializeUnifiedSettings) tells us whether one is already configured,
+  // so we can show a masked placeholder instead of a blank field that looks unconfigured.
+  // Leaving the field untouched submits nothing (the draft only records actual edits), so
+  // the existing key is never accidentally cleared or overwritten by rendering this hint.
+  function renderSecretWidget(ctx) {
+    const { spec, valueWrap, currentDraft, readOnly, setDraftValue, setFieldError } = ctx;
+    const control = document.createElement("input");
+    control.type = "password";
+    control.autocomplete = "new-password";
+    assignControlIdentity(control, ctx, "value");
+    control.value = currentDraft || "";
+    control.disabled = readOnly;
+
+    const isSetPath = spec.apiPath ? `${spec.apiPath}Set` : null;
+    const isSet = isSetPath ? !!readJsonPath(state.unifiedSettings, isSetPath) : false;
+    control.placeholder = isSet ? "•••••••••••• (leave blank to keep current key)" : "Not set";
+
+    control.addEventListener("change", () => {
+      setDraftValue(control.value);
+      setFieldError(false, "");
+    });
+    valueWrap.appendChild(control);
   }
 
   // Generic select widget. Options are resolved via getWidgetSelectOptions(),

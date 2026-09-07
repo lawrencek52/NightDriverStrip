@@ -345,6 +345,7 @@ The `device.schedule.*` fields configure a nightly brightness schedule (dim, the
 | | `device.use24HourClock` | Whether to display time using a 24-hour clock (`true`/`false`). |
 | | `device.useCelsius` | Whether to display temperatures in Celsius (`true`/`false`). |
 | | `device.ntpServer` | NTP server hostname. |
+| | `device.openWeatherApiKey` | Write-only: API key for the Open Weather API. Never returned by GET; submitting it empty leaves the stored key unchanged. `device.openWeatherApiKeySet` (read-only, in the response) reports whether one is currently configured. |
 | | `device.rememberCurrentEffect` | Whether to resume the last-active effect on reboot (`true`/`false`). |
 | | `device.powerLimit` | Power consumption limit in milliwatts. |
 | | `device.brightness` | LED brightness (0–255). |
@@ -358,9 +359,10 @@ The `device.schedule.*` fields configure a nightly brightness schedule (dim, the
 | | `device.schedule.dimTime` | When dimming starts. Either `"HH:MM"` (24-hour, minute must be a 15-minute step: 00/15/30/45) or one of `"sunrise"`/`"sunset"`/`"noon"`/`"midnight"`. |
 | | `device.schedule.offTime` | When the display turns fully off. Same format as `dimTime`. |
 | | `device.schedule.onTime` | When the display returns to normal brightness. Same format as `dimTime`. |
-| | `device.schedule.latLongAuto` | Whether latitude/longitude are resolved automatically from `device.location`/`device.countryCode` (via the same OpenWeatherMap geocoding the weather effect uses) whenever they change (`true`/`false`). Defaults to `true`. When `true`, changing `location`, `locationIsZip`, `countryCode`, or setting this to `true` triggers a resolution attempt in the same request; a failed attempt (no API key, no network, unknown location) silently leaves the previous values in place. |
+| | `device.schedule.latLongAuto` | Whether latitude/longitude are resolved automatically from `device.location`/`device.countryCode` (via the same OpenWeatherMap geocoding the weather effect uses) whenever they change (`true`/`false`). Defaults to `true`. When `true`, changing `location`, `locationIsZip`, `countryCode`, or setting this to `true` triggers a resolution attempt in the same request; a failed attempt (no API key, no network, unknown location) leaves the previous values in place and is reported in `device.schedule.latLongStatus`, not the request's error response. |
 | | `device.schedule.latitude` | Device latitude in degrees (-90 to 90), used only to compute `sunrise`/`sunset` for the schedule above. Ignored (and overwritten) while `latLongAuto` is `true`. |
 | | `device.schedule.longitude` | Device longitude in degrees (-180 to 180), used only to compute `sunrise`/`sunset` for the schedule above. Ignored (and overwritten) while `latLongAuto` is `true`. |
+| | `device.schedule.latLongStatus` | Read-only: outcome of the most recent auto-detect attempt (empty until one has run), e.g. `"OK: resolved '...' to 45.4215, -75.6972."` or a failure reason - for Canadian postal codes specifically, a common failure is Open Weather's zip lookup only matching the 3-character forward sortation area (e.g. `"K1A"`) rather than the full code. |
 | | `effects.effectInterval` | Duration in milliseconds that each effect runs before the next is activated. |
 | Response | 200 (OK) | A JSON blob with the current unified device settings after applying the changes in the request, in the same format as the GET response. |
 | | 400 (Bad Request) | Validation failed for one or more of the provided values. The applicable message is returned in a JSON blob. |

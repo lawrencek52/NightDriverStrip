@@ -21,7 +21,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         // Build the table in one allocation. On no-PSRAM boards this metadata
         // is created after the HUB75 DMA buffers, so geometric vector growth
         // can temporarily require both old and new contiguous blocks.
-        constexpr size_t kFixedSettingSpecCapacity = 36;
+        constexpr size_t kFixedSettingSpecCapacity = 37;
         const auto compiledChannelCount = GetCompiledChannelCount();
         // Each compiled channel contributes a per-channel pin spec (two on APA102) plus a
         // per-channel strip-length spec, so budget headroom for both.
@@ -136,12 +136,15 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name          = OpenWeatherApiKeyTag,
             .FriendlyName  = "Open Weather API key",
-            .Description   = "The API key for the <a href=\"https://openweathermap.org/api\">Weather API provided by Open Weather Map</a>.",
+            .Description   = "The API key for the <a href=\"https://openweathermap.org/api\">Weather API provided by Open Weather Map</a>. "
+                            "The key itself is never sent back to the browser once saved; the field shows a masked placeholder "
+                            "instead of going blank when one is already configured. Leave it blank to keep the current key.",
             .Type          = SettingSpec::SettingType::String,
             .HasValidation = true,
             .Access        = SettingSpec::SettingAccess::WriteOnly,
             .Section       = kSectionClock,
-            .ApiPath       = "device.openWeatherApiKey"
+            .ApiPath       = "device.openWeatherApiKey",
+            .Widget        = SettingSpec::WidgetKind::Secret
         }));
 
         // ---- audio section -------------------------------------------------
@@ -334,6 +337,16 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .MaximumValue  = 180.0,
             .Section       = kSectionSchedule,
             .ApiPath       = "device.schedule.longitude"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = "scheduleLatLongStatus",
+            .FriendlyName = "Auto-detect result",
+            .Description  = "Result of the most recent latitude/longitude auto-detect attempt (blank until one has run). "
+                            "A failure here doesn't block saving other settings - it just means latitude/longitude above were left unchanged.",
+            .Type         = SettingSpec::SettingType::String,
+            .Access       = SettingSpec::SettingAccess::ReadOnly,
+            .Section      = kSectionSchedule,
+            .ApiPath      = "device.schedule.latLongStatus"
         }));
 
         // ---- topology section ----------------------------------------------

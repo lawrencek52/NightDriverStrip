@@ -1010,7 +1010,10 @@ SuccessResultWithMessage DeviceConfig::ValidateOpenWeatherAPIKey(const String &n
 bool DeviceConfig::ResolveScheduleLatLongFromLocation()
 {
     if (location.isEmpty() || openWeatherApiKey.isEmpty())
+    {
+        scheduleLatLongStatus = "Not attempted: set a location and an Open Weather API key first.";
         return false;
+    }
 
     HTTPClient http;
     String url;
@@ -1027,6 +1030,8 @@ bool DeviceConfig::ResolveScheduleLatLongFromLocation()
     {
         debugW("ResolveScheduleLatLongFromLocation: geocoding request for '%s' failed (HTTP %d)", location.c_str(), httpResponseCode);
         http.end();
+        scheduleLatLongStatus = String("Failed: geocoding request returned HTTP ") + httpResponseCode
+            + ". Check the API key and, for a postal code, that it's formatted the way Open Weather expects.";
         return false;
     }
 
@@ -1038,16 +1043,28 @@ bool DeviceConfig::ResolveScheduleLatLongFromLocation()
     if (!coordinates["lat"].is<float>() || !coordinates["lon"].is<float>())
     {
         debugW("ResolveScheduleLatLongFromLocation: no coordinates found for '%s'", location.c_str());
+        // Open Weather's zip geocoding is only reliable with the outward/prefix portion of
+        // alphanumeric postal codes (e.g. UK, Canada) - a full 6-character Canadian postal
+        // code commonly returns no match where the 3-character FSA (e.g. "K1A") does.
+        if (locationIsZip && countryCode == "CA" && location.length() > 3)
+            scheduleLatLongStatus = "Failed: no coordinates found for '" + location
+                + "'. Open Weather's postal code lookup for Canada usually only works with the "
+                + "3-character forward sortation area (e.g. \"K1A\" instead of \"K1A 0A6\") - try that.";
+        else
+            scheduleLatLongStatus = "Failed: no coordinates found for '" + location + "'.";
         return false;
     }
 
     SetScheduleLatitude(coordinates["lat"].as<float>());
     SetScheduleLongitude(coordinates["lon"].as<float>());
+    scheduleLatLongStatus = "OK: resolved '" + location + "' to " + String(GetScheduleLatitude(), 4)
+        + ", " + String(GetScheduleLongitude(), 4) + ".";
     return true;
 }
 #else
 bool DeviceConfig::ResolveScheduleLatLongFromLocation()
 {
+    scheduleLatLongStatus = "Not attempted: this build has no WiFi/network support.";
     return false;
 }
 #endif  // ENABLE_WIFI

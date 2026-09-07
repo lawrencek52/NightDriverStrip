@@ -156,6 +156,9 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     device["use24HourClock"] = Use24HourClock();
     device["useCelsius"] = UseCelsius();
     device["ntpServer"] = GetNTPServer();
+    // The key itself is write-only and never serialized; this just lets the UI show a
+    // masked placeholder instead of an always-blank field regardless of whether one is set.
+    device["openWeatherApiKeySet"] = !GetOpenWeatherAPIKey().isEmpty();
     device["rememberCurrentEffect"] = RememberCurrentEffect();
     device["powerLimit"] = GetPowerLimit();
     device["brightness"] = GetBrightness();
@@ -172,6 +175,7 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     schedule["latLongAuto"] = ScheduleLatLongAuto();
     schedule["latitude"] = GetScheduleLatitude();
     schedule["longitude"] = GetScheduleLongitude();
+    schedule["latLongStatus"] = GetScheduleLatLongStatus();
 
     auto remote = device["remote"].to<JsonObject>();
     #if ENABLE_REMOTE
