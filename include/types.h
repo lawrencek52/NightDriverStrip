@@ -50,6 +50,28 @@ using ResultWithMessage = std::pair<TResult, String>;
 
 using SuccessResultWithMessage = ResultWithMessage<bool>;
 
+// Shared between DeviceConfig (persisted per-channel topology settings) and GFXBase (the
+// pixel-addressing math that actually honors them) - defined here, rather than in either
+// header, so neither the settings layer nor the graphics layer has to depend on the other.
+
+// Which corner of a matrix LED index 0 is wired to.
+enum class MatrixOrigin : uint8_t
+{
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight
+};
+
+// Which axis a serpentine zigzag runs along: Vertical means each physical strip is one column
+// (the historical/only behavior before per-channel topology existed); Horizontal means each
+// physical strip is one row.
+enum class SerpentineAxis : uint8_t
+{
+    Horizontal,
+    Vertical
+};
+
 // str_snprintf
 //
 // va-args style printf that returns the formatted string as a result

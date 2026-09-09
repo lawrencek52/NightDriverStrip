@@ -1123,12 +1123,14 @@ void IRAM_ATTR ColorStreamerService::Run()
                     const auto& deviceConfig = g_ptrSystem->GetDeviceConfig();
                     const size_t channelCount = deviceConfig.GetChannelCount();
 
-                    // Individual-strips with more than one active channel: concatenate every
+                    // Anything other than a clean uniform matrix (individual strips, or a mixed
+                    // strip/matrix topology) with more than one active channel: concatenate every
                     // channel's own LED buffer (each is independently allocated - see
                     // SystemContainer::ApplyRuntimeConfiguration - so there's no aliasing to
-                    // worry about) so the web UI can render one bar per strip instead of only
-                    // ever seeing channel 0.
-                    if (deviceConfig.GetLayout() == DeviceConfig::LayoutType::IndividualStrips && channelCount > 1)
+                    // worry about) so the web UI can render one bar per channel instead of only
+                    // ever seeing channel 0. Full per-channel-shape-aware preview rendering
+                    // (matrix-shaped channels drawn as small grids) is a future improvement.
+                    if (!deviceConfig.IsUniformMatrix() && channelCount > 1)
                     {
                         const size_t totalLEDCount = deviceConfig.GetActiveLEDCount();
                         if (totalLEDCount > multiChannelPreviewCapacity)

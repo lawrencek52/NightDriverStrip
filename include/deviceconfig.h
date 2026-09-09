@@ -155,29 +155,51 @@ class DeviceConfig : public IJSONSerializable
         BGR
     };
 
-    // Layout type describes how multiple WS281x channels map to pixels:
-    //   Matrix           - every channel carries the same width*height pixel grid, laid out as a matrix
-    //                      (serpentine optional). All channels must use the same LED count, set via
-    //                      RuntimeTopology.width and RuntimeTopology.height.
-    //   IndividualStrips - each channel is its own strip with its own length. The total LED count is
-    //                      the sum of RuntimeTopology.stripLengths[0..channelCount-1]. Matrix
-    //                      width/height/serpentine are ignored.
-    enum class LayoutType : uint8_t
+    // Each output channel independently is either a plain strip or its own matrix - e.g. one
+    // channel can drive a 32x16 matrix (two chained 16x16 panels) while another drives a plain
+    // 300-LED strip. HUB75 builds never use this: they're always a single compile-time-fixed
+    // matrix and never generate per-channel topology settings (see IsHub75Build() gates below
+    // and in deviceconfig_settings_specs.cpp/deviceconfig_validation.cpp).
+    enum class ChannelShape : uint8_t
     {
-        Matrix,
-        IndividualStrips
+        Strip,
+        Matrix
+    };
+
+    // MatrixOrigin/SerpentineAxis are defined in types.h (shared with GFXBase, which is what
+    // actually consumes them for pixel addressing).
+
+    struct ChannelTopology
+    {
+        ChannelShape shape = ChannelShape::Strip;
+        uint16_t stripLength = NUM_LEDS;       // used when shape == Strip
+        uint16_t matrixWidth = MATRIX_WIDTH;   // used when shape == Matrix
+        uint16_t matrixHeight = MATRIX_HEIGHT;
+        bool matrixSerpentine = true;
+        MatrixOrigin origin = MatrixOrigin::TopLeft;
+        SerpentineAxis axis = SerpentineAxis::Vertical;
+
+        // Written by hand rather than "= default" - the xtensa-esp32 GCC 8.4.0 toolchain
+        // doesn't support defaulted comparison operators even under -std=c++2a.
+        bool operator==(const ChannelTopology& other) const
+        {
+            return shape == other.shape
+                && stripLength == other.stripLength
+                && matrixWidth == other.matrixWidth
+                && matrixHeight == other.matrixHeight
+                && matrixSerpentine == other.matrixSerpentine
+                && origin == other.origin
+                && axis == other.axis;
+        }
+        bool operator!=(const ChannelTopology& other) const { return !(*this == other); }
     };
 
     struct RuntimeTopology
     {
-        LayoutType layout = LayoutType::Matrix;
-        uint16_t width = MATRIX_WIDTH;
-        uint16_t height = MATRIX_HEIGHT;
-        bool serpentine = true;
-        // Per-channel LED counts. Used when layout == IndividualStrips; ignored otherwise. Defaults
-        // are populated in DeviceConfig::DeviceConfig() so that newly-saved configs always carry
-        // a sensible array even before the user edits it.
-        std::array<uint16_t, NUM_CHANNELS> stripLengths{};
+        // Always present (not conditionally compiled for HUB75) - a handful of bytes per
+        // channel, and #ifdef-ing it away would force parallel #ifdefs through every consumer
+        // for no real benefit. HUB75 builds simply never read or write it.
+        std::array<ChannelTopology, NUM_CHANNELS> channels{};
     };
 
     struct RuntimeOutputs
@@ -278,9 +300,9 @@ class DeviceConfig : public IJSONSerializable
     float   scheduleLongitude = 0.0f;
 
     // Human-readable outcome of the most recent ResolveScheduleLatLongFromLocation() attempt
-    // (empty until the first attempt). Not persisted - purely a live diagnostic surfaced
-    // through the unified settings read, since a failed auto-detect otherwise fails silently
-    // (the previous lat/long is deliberately left in place rather than blocking the save).
+    // (empty until the first attempt). Persisted so it survives a reboot without needing to
+    // re-poll Open Weather - it's only ever refreshed when SetLocation/SetLocationIsZip/
+    // SetCountryCode/SetScheduleLatLongAuto trigger a fresh resolution, not on every boot.
     String scheduleLatLongStatus = "";
 
     // Best-effort: resolves scheduleLatitude/scheduleLongitude from location/countryCode
@@ -308,12 +330,14 @@ class DeviceConfig : public IJSONSerializable
     std::vector<SettingSpec, psram_allocator<SettingSpec>> settingSpecs;
     std::vector<std::reference_wrapper<SettingSpec>> settingSpecReferences;
     std::vector<String> pinSpecStrings;
-    // Per-strip length spec labels. Stored in std::string (not Arduino String) because the
-    // Arduino String's SSO buffer can hold stack garbage if the SSO/heap flag ends up wrong,
-    // which leaks into the c_str() pointers stored in the per-strip SettingSpec objects. The
+    // Per-channel topology spec labels (name/friendlyName/description/apiPath for each of the
+    // 7 fields generated per channel - shape, stripLength, matrixWidth, matrixHeight,
+    // matrixSerpentine, matrixOrigin, matrixAxis). Stored in std::string (not Arduino String)
+    // because the Arduino String's SSO buffer can hold stack garbage if the SSO/heap flag ends
+    // up wrong, which leaks into the c_str() pointers stored in the SettingSpec objects. The
     // std::string instances here outlive DeviceConfig::GetSettingSpecs() so those pointers
     // stay valid for the lifetime of the device.
-    std::vector<std::string> _stripLengthStrings;
+    std::vector<std::string> _channelTopologyStrings;
     size_t writerIndex;
 
     void SaveToJSON() const;
@@ -366,15 +390,23 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * GlobalColorTag = NAME_OF(globalColor);
     static constexpr const char * ApplyGlobalColorsTag = NAME_OF(applyGlobalColors);
     static constexpr const char * SecondColorTag = NAME_OF(secondColor);
-    static constexpr const char * MatrixWidthTag = "matrixWidth";
-    static constexpr const char * MatrixHeightTag = "matrixHeight";
-    static constexpr const char * MatrixSerpentineTag = "matrixSerpentine";
-    static constexpr const char * MatrixLayoutTag = "matrixLayout";
-    static constexpr const char * MatrixStripLengthsTag = "matrixStripLengths";
-    // Base prefix for the per-channel strip-length specs. The webserver and setting-spec
-    // generators append the channel index (e.g. MatrixStripLength0Tag becomes
-    // "matrixStripLength0", "matrixStripLength1", ...).
-    static constexpr const char * MatrixStripLength0Tag = "matrixStripLength0";
+    // Per-channel topology, persisted as parallel arrays (one entry per compiled channel),
+    // matching the pre-existing stripLengths-array convention.
+    static constexpr const char * ChannelShapesTag = "channelShapes";
+    static constexpr const char * ChannelStripLengthsTag = "channelStripLengths";
+    static constexpr const char * ChannelMatrixWidthsTag = "channelMatrixWidths";
+    static constexpr const char * ChannelMatrixHeightsTag = "channelMatrixHeights";
+    static constexpr const char * ChannelMatrixSerpentinesTag = "channelMatrixSerpentines";
+    static constexpr const char * ChannelMatrixOriginsTag = "channelMatrixOrigins";
+    static constexpr const char * ChannelMatrixAxesTag = "channelMatrixAxes";
+    // Legacy (pre-per-channel-topology) tags, kept only so DeserializeFromJSON can migrate an
+    // old persisted config forward the first time it loads under new firmware. Never written.
+    static constexpr const char * LegacyMatrixWidthTag = "matrixWidth";
+    static constexpr const char * LegacyMatrixHeightTag = "matrixHeight";
+    static constexpr const char * LegacyMatrixSerpentineTag = "matrixSerpentine";
+    static constexpr const char * LegacyMatrixLayoutTag = "matrixLayout";
+    static constexpr const char * LegacyMatrixStripLengthsTag = "matrixStripLengths";
+    static constexpr const char * LegacyMatrixStripLength0Tag = "matrixStripLength0";
     static constexpr const char * OutputDriverTag = "outputDriver";
     static constexpr const char * WS281xChannelCountTag = "ws281xChannelCount";
     static constexpr const char * WS281xPinsTag = "ws281xPins";
@@ -389,6 +421,7 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * ScheduleLatLongAutoTag = NAME_OF(scheduleLatLongAuto);
     static constexpr const char * ScheduleLatitudeTag = NAME_OF(scheduleLatitude);
     static constexpr const char * ScheduleLongitudeTag = NAME_OF(scheduleLongitude);
+    static constexpr const char * ScheduleLatLongStatusTag = NAME_OF(scheduleLatLongStatus);
 
     DeviceConfig();
 
@@ -527,14 +560,51 @@ class DeviceConfig : public IJSONSerializable
     RuntimeConfig GetRuntimeConfig() const { return RuntimeConfig{runtimeTopology, runtimeOutputs}; }
     const RuntimeTopology& GetTopology() const { return runtimeTopology; }
     const RuntimeOutputs& GetOutputs() const { return runtimeOutputs; }
-    uint16_t GetMatrixWidth() const { return runtimeTopology.width; }
-    uint16_t GetMatrixHeight() const { return runtimeTopology.height; }
-    bool IsMatrixSerpentine() const { return runtimeTopology.serpentine; }
-    LayoutType GetLayout() const { return runtimeTopology.layout; }
-    const std::array<uint16_t, NUM_CHANNELS>& GetStripLengths() const { return runtimeTopology.stripLengths; }
-    // Per-channel LED count. For Matrix layout this is width * height (every channel carries the
-    // full pixel grid); for IndividualStrips this is stripLengths[channel], bounded by the active
-    // channel count.
+    const ChannelTopology& GetChannelTopology(size_t channel) const
+    {
+        static const ChannelTopology kEmpty{};
+        return channel < runtimeTopology.channels.size() ? runtimeTopology.channels[channel] : kEmpty;
+    }
+    // Kept for source compatibility with callers that want one global "the matrix" answer.
+    // HUB75 is always exactly the compiled panel. Non-HUB75 has no single global matrix once
+    // channels can differ - these report channel 0's configured matrix dims if channel 0 is
+    // Matrix-shaped, else 0/0/false. Prefer GetChannelTopology(i) for anything channel-aware.
+    uint16_t GetMatrixWidth() const
+    {
+        #if USE_HUB75
+        return MATRIX_WIDTH;
+        #else
+        const auto& ch0 = GetChannelTopology(0);
+        return ch0.shape == ChannelShape::Matrix ? ch0.matrixWidth : 0;
+        #endif
+    }
+    uint16_t GetMatrixHeight() const
+    {
+        #if USE_HUB75
+        return MATRIX_HEIGHT;
+        #else
+        const auto& ch0 = GetChannelTopology(0);
+        return ch0.shape == ChannelShape::Matrix ? ch0.matrixHeight : 0;
+        #endif
+    }
+    bool IsMatrixSerpentine() const
+    {
+        #if USE_HUB75
+        return GetCompiledMatrixSerpentine();
+        #else
+        const auto& ch0 = GetChannelTopology(0);
+        return ch0.shape == ChannelShape::Matrix && ch0.matrixSerpentine;
+        #endif
+    }
+    // True only when every active channel is an identical matrix (same width/height/serpentine/
+    // origin/axis) - i.e. today's old global "Matrix" layout, exactly.
+    bool IsUniformMatrix() const;
+    // True when every active channel is Strip-shaped - today's old global "IndividualStrips".
+    bool AreAllChannelsStrip() const;
+    // "matrix" | "individualStrips" | "mixed", derived from the two above - for stats/preview/UI
+    // display only; there's no writable global layout anymore, just per-channel shape.
+    String GetLayoutSummary() const;
+    // Per-channel LED count: stripLength for Strip-shaped channels, width*height for Matrix-shaped.
     uint16_t GetChannelLEDCount(size_t channel) const;
     size_t GetActiveLEDCount() const;
     int GetAudioInputPin() const { return audioInputPin; }
@@ -584,8 +654,10 @@ class DeviceConfig : public IJSONSerializable
     String GetRuntimeDriverName() const { return DriverName(runtimeOutputs.driver); }
 
     SuccessResultWithMessage ValidateAudioInputPin(int pin) const;
+    // HUB75-only: requires an exact match to the compiled panel (HUB75 topology can never change
+    // at runtime). Non-HUB75 builds validate per-channel via ValidateChannelTopology instead.
     SuccessResultWithMessage ValidateTopology(uint16_t width, uint16_t height, bool serpentine) const;
-    SuccessResultWithMessage ValidateStripLengths(const std::array<uint16_t, NUM_CHANNELS>& lengths, size_t channelCount) const;
+    SuccessResultWithMessage ValidateChannelTopology(size_t channelIndex, const ChannelTopology& topology) const;
     SuccessResultWithMessage ValidateOutputDriver(OutputDriver driver) const;
     SuccessResultWithMessage ValidateStripSettings(size_t channelCount,
                                                    const std::array<int8_t, NUM_CHANNELS>& dataPins,
@@ -606,4 +678,8 @@ class DeviceConfig : public IJSONSerializable
     static const char* OutputDriverName(OutputDriver driver);
     static const char* WS281xColorOrderName(WS281xColorOrder colorOrder);
     static void AppendPins(JsonArray target, const std::array<int8_t, NUM_CHANNELS>& pins);
+    static const char* MatrixOriginName(MatrixOrigin origin);
+    static const char* SerpentineAxisName(SerpentineAxis axis);
+    static std::optional<MatrixOrigin> ParseMatrixOriginName(const String& name);
+    static std::optional<SerpentineAxis> ParseSerpentineAxisName(const String& name);
 };

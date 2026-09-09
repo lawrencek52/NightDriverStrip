@@ -643,9 +643,7 @@ The current UI uses all except copy.
 - `applyGlobalColors`
 - `secondColor`
 - `audioInputPin`
-- `matrixWidth`
-- `matrixHeight`
-- `matrixSerpentine`
+- `channelShapes`, `channelStripLengths`, `channelMatrixWidths`, `channelMatrixHeights`, `channelMatrixSerpentines`, `channelMatrixOrigins`, `channelMatrixAxes` (parallel per-channel arrays; the raw enum-as-int values, not the string forms `topology.channels[i].*` uses - see the unified endpoint below)
 - `outputDriver`
 - `ws281xChannelCount`
 - `ws281xColorOrder`
@@ -654,7 +652,7 @@ The current UI uses all except copy.
 
 Sensitive fields such as the weather API key are omitted from this read response.
 
-`POST /settings` accepts form-encoded legacy fields by name. The current UI only uses this for settings without an `apiPath` and for the toolbar effect interval shortcut.
+`POST /settings` accepts form-encoded legacy fields by name. The current UI only uses this for settings without an `apiPath` and for the toolbar effect interval shortcut. Topology fields (`matrixWidth`, `matrixHeight`, `matrixSerpentine`, `matrixLayout`, `matrixStripLengths`, `matrixStripLength{N}`) are rejected here with an error pointing at the unified endpoint's `topology.channels[i].*` instead, since a flat field no longer unambiguously means "set this for the device" once a channel can independently be a strip or its own matrix.
 
 `GET /settings/specs` returns an array of setting spec objects. Each spec has:
 
@@ -786,18 +784,22 @@ Select option sources:
 - `device.schedule.latLongAuto`
 - `device.schedule.latitude`
 - `device.schedule.longitude`
-- `topology.width`
-- `topology.height`
-- `topology.serpentine`
+- `topology.channels[i].shape` (`"strip"` or `"matrix"`, one entry per channel - HUB75 rejects this entirely, it's always a single compile-time-fixed matrix)
+- `topology.channels[i].stripLength`
+- `topology.channels[i].matrixWidth`
+- `topology.channels[i].matrixHeight`
+- `topology.channels[i].matrixSerpentine`
+- `topology.channels[i].matrixOrigin` (`"topLeft"`/`"topRight"`/`"bottomLeft"`/`"bottomRight"`)
+- `topology.channels[i].matrixAxis` (`"horizontal"`/`"vertical"`)
 - `outputs.driver`
 - `outputs.ws281x.channelCount`
 - `outputs.ws281x.colorOrder`
 - `outputs.ws281x.pins[N]`
 - `effects.effectInterval`
 
-When posting array element paths like `outputs.ws281x.pins[2]`, the UI must seed the outgoing array with the current full array from `state.unifiedSettings` before changing the indexed element. This prevents sparse arrays from clearing other pins.
+When posting array element paths like `outputs.ws281x.pins[2]` or `topology.channels[0].shape`, the UI must seed the outgoing array with the current full array from `state.unifiedSettings` before changing the indexed element. This prevents sparse arrays from clearing other pins/channels.
 
-Two read-only diagnostic fields ride along in the GET/POST response but are never posted: `device.openWeatherApiKeySet` (boolean - whether an API key is currently configured, since the key itself is write-only) and `device.schedule.latLongStatus` (string - the outcome of the most recent lat/long auto-detect attempt, surfaced as a read-only setting so a failure isn't silent).
+Two read-only diagnostic fields ride along in the GET/POST response but are never posted: `device.openWeatherApiKeySet` (boolean - whether an API key is currently configured, since the key itself is write-only) and `device.schedule.latLongStatus` (string - the outcome of the most recent lat/long auto-detect attempt, surfaced as a read-only setting so a failure isn't silent). `topology.layout` (`"matrix"`/`"individualStrips"`/`"mixed"`) is also read-only - a display summary derived from the per-channel shapes, not a separate writable field.
 
 `GET /api/v1/settings/schema` returns schema/support metadata:
 
@@ -1102,11 +1104,12 @@ Validation:
 - Error text goes into `.field-help` and adds `.field-error`.
 - Clearing error restores original description HTML.
 
-Topology cross-field validation:
+Topology cross-field validation (per channel - each channel independently a strip or its own matrix):
 
-- Determine max LEDs from `unifiedSchema.topology.compiledMaxLEDs` or `staticStats.COMPILED_NUM_LEDS`.
-- Read drafted or current `matrixWidth` and `matrixHeight`.
-- If width * height exceeds max LEDs, add same error to both fields unless they already have errors.
+- Determine max LEDs per channel from `unifiedSchema.topology.compiledMaxLEDs` or `staticStats.COMPILED_NUM_LEDS`.
+- For each `channel{i}Shape` spec, read that channel's drafted-or-current shape.
+- If `"strip"`: read `channel{i}StripLength`; if it exceeds max LEDs, error on that field.
+- If `"matrix"`: read `channel{i}MatrixWidth`/`channel{i}MatrixHeight`; if their product exceeds max LEDs, add the same error to both fields.
 
 Apply flow:
 
@@ -1357,9 +1360,13 @@ Notable settings:
 - Apply global color: write-only boolean, path `device.applyGlobalColors`.
 - Clear global color: write-only boolean, path `device.clearGlobalColor`.
 - Remember current effect: boolean, path `device.rememberCurrentEffect`.
-- Matrix width: positive integer, priority 0, path `topology.width`.
-- Matrix height: positive integer, priority 1, path `topology.height`.
-- Serpentine layout: boolean, priority 2, path `topology.serpentine`.
+- Per channel `i` (0-indexed, one full set per compiled channel; HUB75 emits none of these - it's always a single compile-time-fixed matrix), priorities `i*7 + 0` through `i*7 + 6`:
+  - Shape: string select (`strip`/`matrix`), path `topology.channels[i].shape`.
+  - Strip length: positive integer, path `topology.channels[i].stripLength`. Shown only when that channel's shape is `strip`.
+  - Matrix width / height: positive integer, paths `topology.channels[i].matrixWidth` / `matrixHeight`. Shown only when that channel's shape is `matrix`.
+  - Serpentine: boolean, path `topology.channels[i].matrixSerpentine`. Shown only when that channel's shape is `matrix`.
+  - Matrix origin: string select (`topLeft`/`topRight`/`bottomLeft`/`bottomRight`), path `topology.channels[i].matrixOrigin`. Shown only when that channel's shape is `matrix`.
+  - Matrix axis: string select (`horizontal`/`vertical`), path `topology.channels[i].matrixAxis`. Shown only when that channel's shape is `matrix`.
 - Output driver: select from schema path `outputs.allowedDrivers`, path `outputs.driver`.
 - WS281x channel count: select from `outputs.ws281x.allowedChannelCounts`, path `outputs.ws281x.channelCount`.
 - WS281x color order: select from `outputs.ws281x.allowedColorOrders`, path `outputs.ws281x.colorOrder`.
@@ -1405,7 +1412,7 @@ A regenerated UI is compatible when all of the following are true:
 - Device settings render from firmware specs and schema, including all current widget kinds.
 - Settings with `apiPath` post through `/api/v1/settings`; settings without it post through `/settings`.
 - Array-element api paths seed existing arrays before writing.
-- Matrix width/height are cross-validated against compiled LED capacity.
+- Each channel's matrix width/height (or strip length) is cross-validated against compiled per-channel LED capacity.
 - Reboot-required setting changes warn on normal Apply.
 - Apply + Reboot posts settings first, then `/reset`.
 - Statistics cards use the same static/dynamic fields.

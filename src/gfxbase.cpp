@@ -622,7 +622,7 @@ GFXBase::GFXBase(int w, int h) : Adafruit_GFX(w, h),
     ResetOscillators();
 }
 
-void GFXBase::ConfigureTopology(size_t width, size_t height, bool serpentine)
+void GFXBase::ConfigureTopology(size_t width, size_t height, bool serpentine, MatrixOrigin origin, SerpentineAxis axis)
 {
     // The runtime topology work is intentionally routed through GFXBase so effects that already ask g()
     // for geometry start honoring live strip layouts without each effect learning about DeviceConfig.
@@ -640,6 +640,8 @@ void GFXBase::ConfigureTopology(size_t width, size_t height, bool serpentine)
     _height     = height;
     _ledcount   = width * height;
     _serpentine = serpentine;
+    _origin     = origin;
+    _axis       = axis;
 
     WIDTH  = width;
     HEIGHT = height;

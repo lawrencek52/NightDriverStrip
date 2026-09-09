@@ -74,14 +74,12 @@ namespace
 
     void LogRuntimeAPA102Configuration(const DeviceConfig& config, const std::vector<std::shared_ptr<GFXBase>>& devices, const char* reason)
     {
-        debugI("APA102 config (%s): path=spi-dma@%uHz driver=%s channels=%zu matrix=%ux%u serpentine=%d colorOrder=%s leds=%zu",
+        debugI("APA102 config (%s): path=spi-dma@%uHz driver=%s channels=%zu layout=%s colorOrder=%s leds=%zu",
                reason ? reason : "update",
                static_cast<unsigned>(APA102_SPI_HZ),
                config.GetRuntimeDriverName().c_str(),
                config.GetChannelCount(),
-               static_cast<unsigned>(config.GetMatrixWidth()),
-               static_cast<unsigned>(config.GetMatrixHeight()),
-               config.IsMatrixSerpentine(),
+               config.GetLayoutSummary().c_str(),
                DeviceConfig::GetColorOrderName(config.GetWS281xColorOrder()).c_str(),
                config.GetActiveLEDCount());
 

@@ -54,7 +54,9 @@ public:
 
     static void InitializeHardware(std::vector<std::shared_ptr<GFXBase>>& devices);
     static std::mutex& TransportMutex();
-    void ConfigureTopology(size_t width, size_t height, bool serpentine) override;
+    void ConfigureTopology(size_t width, size_t height, bool serpentine,
+                            MatrixOrigin origin = MatrixOrigin::TopLeft,
+                            SerpentineAxis axis = SerpentineAxis::Vertical) override;
 
     // PostProcessFrame
     //

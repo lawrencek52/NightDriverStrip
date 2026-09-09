@@ -355,55 +355,23 @@ SuccessResultWithMessage CWebServer::SetSettingsIfPresent(AsyncWebServerRequest 
     auto runtimeConfig = deviceConfig.GetRuntimeConfig();
     bool runtimeConfigChanged = false;
 
-    runtimeConfigChanged = PushPostParamIfPresent<size_t>(pRequest, DeviceConfig::MatrixWidthTag, SET_VALUE(runtimeConfig.topology.width = value)) || runtimeConfigChanged;
-    runtimeConfigChanged = PushPostParamIfPresent<size_t>(pRequest, DeviceConfig::MatrixHeightTag, SET_VALUE(runtimeConfig.topology.height = value)) || runtimeConfigChanged;
-    runtimeConfigChanged = PushPostParamIfPresent<bool>(pRequest, DeviceConfig::MatrixSerpentineTag, SET_VALUE(runtimeConfig.topology.serpentine = value)) || runtimeConfigChanged;
-
-    if (pRequest->hasParam(DeviceConfig::MatrixLayoutTag, true, false))
+    // Topology (matrix/strip shape per channel, dimensions, serpentine, origin, axis) moved to
+    // per-channel settings under topology.channels[i].* once a channel could be independently a
+    // strip or its own matrix - there's no flat field name left that unambiguously means "set
+    // this for the device". Reject rather than silently misapplying to the wrong channel.
+    static constexpr const char* kLegacyTopologyParams[] = {
+        "matrixWidth", "matrixHeight", "matrixSerpentine", "matrixLayout", "matrixStripLengths"
+    };
+    for (const auto* legacyParam : kLegacyTopologyParams)
     {
-        const auto layoutName = pRequest->getParam(DeviceConfig::MatrixLayoutTag, true, false)->value();
-        if (layoutName == "individualStrips" || layoutName == "individual")
-            runtimeConfig.topology.layout = DeviceConfig::LayoutType::IndividualStrips;
-        else
-            runtimeConfig.topology.layout = DeviceConfig::LayoutType::Matrix;
-        runtimeConfigChanged = true;
+        if (pRequest->hasParam(legacyParam, true, false))
+            return { false, String(legacyParam) + " is no longer supported on this endpoint - use POST /api/v1/settings with topology.channels[i].* instead" };
     }
-
-    // Per-strip length fields. One legacy form field per channel (matrixStripLength0, ...,
-    // matrixStripLengthN) plus a unified array form (matrixStripLengths). Both are honored; the
-    // array form wins if both are present.
-    if (pRequest->hasParam(DeviceConfig::MatrixStripLengthsTag, true, false))
+    for (size_t i = 0; i < DeviceConfig::GetCompiledChannelCount(); ++i)
     {
-        const auto raw = pRequest->getParam(DeviceConfig::MatrixStripLengthsTag, true, false)->value();
-        auto jsonDoc = CreateJsonDocument();
-        if (deserializeJson(jsonDoc, raw) == DeserializationError::Ok && jsonDoc.is<JsonArrayConst>())
-        {
-            auto array = jsonDoc.as<JsonArrayConst>();
-            for (size_t i = 0; i < runtimeConfig.topology.stripLengths.size() && i < array.size(); ++i)
-            {
-                if (array[i].is<int>())
-                {
-                    const int requested = array[i].as<int>();
-                    if (requested > 0)
-                        runtimeConfig.topology.stripLengths[i] = static_cast<uint16_t>(requested);
-                }
-            }
-        }
-        runtimeConfigChanged = true;
-    }
-    else
-    {
-        for (size_t i = 0; i < runtimeConfig.topology.stripLengths.size(); ++i)
-        {
-            const String tag = String(DeviceConfig::MatrixStripLength0Tag) + String(static_cast<unsigned>(i));
-            if (pRequest->hasParam(tag, true, false))
-            {
-                const int requested = pRequest->getParam(tag, true, false)->value().toInt();
-                if (requested > 0)
-                    runtimeConfig.topology.stripLengths[i] = static_cast<uint16_t>(requested);
-                runtimeConfigChanged = true;
-            }
-        }
+        const String tag = String("matrixStripLength") + String(static_cast<unsigned>(i));
+        if (pRequest->hasParam(tag, true, false))
+            return { false, tag + " is no longer supported on this endpoint - use POST /api/v1/settings with topology.channels[i].* instead" };
     }
 
     runtimeConfigChanged = PushPostParamIfPresent<size_t>(pRequest, DeviceConfig::WS281xChannelCountTag, SET_VALUE(runtimeConfig.outputs.channelCount = value)) || runtimeConfigChanged;

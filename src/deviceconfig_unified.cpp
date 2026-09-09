@@ -66,6 +66,41 @@ std::optional<DeviceConfig::WS281xColorOrder> DeviceConfig::ParseWS281xColorOrde
     return std::nullopt;
 }
 
+const char* DeviceConfig::MatrixOriginName(MatrixOrigin origin)
+{
+    switch (origin)
+    {
+        case MatrixOrigin::TopLeft:     return "topLeft";
+        case MatrixOrigin::TopRight:    return "topRight";
+        case MatrixOrigin::BottomLeft:  return "bottomLeft";
+        case MatrixOrigin::BottomRight: return "bottomRight";
+        default:                        return "topLeft";
+    }
+}
+
+const char* DeviceConfig::SerpentineAxisName(SerpentineAxis axis)
+{
+    return axis == SerpentineAxis::Horizontal ? "horizontal" : "vertical";
+}
+
+std::optional<MatrixOrigin> DeviceConfig::ParseMatrixOriginName(const String& name)
+{
+    if (name == "topLeft") return MatrixOrigin::TopLeft;
+    if (name == "topRight") return MatrixOrigin::TopRight;
+    if (name == "bottomLeft") return MatrixOrigin::BottomLeft;
+    if (name == "bottomRight") return MatrixOrigin::BottomRight;
+
+    return std::nullopt;
+}
+
+std::optional<SerpentineAxis> DeviceConfig::ParseSerpentineAxisName(const String& name)
+{
+    if (name == "horizontal") return SerpentineAxis::Horizontal;
+    if (name == "vertical") return SerpentineAxis::Vertical;
+
+    return std::nullopt;
+}
+
 SuccessResultWithMessage DeviceConfig::SetRuntimeConfig(const RuntimeConfig& config, bool skipWrite)
 {
     auto [isValid, validationMessage] = ValidateRuntimeConfig(config);
@@ -73,9 +108,7 @@ SuccessResultWithMessage DeviceConfig::SetRuntimeConfig(const RuntimeConfig& con
         return { false, validationMessage };
 
     const bool changed =
-        runtimeTopology.width != config.topology.width
-        || runtimeTopology.height != config.topology.height
-        || runtimeTopology.serpentine != config.topology.serpentine
+        runtimeTopology.channels != config.topology.channels
         || runtimeOutputs.driver != config.outputs.driver
         || runtimeOutputs.channelCount != config.outputs.channelCount
         || runtimeOutputs.outputPins != config.outputs.outputPins
@@ -202,29 +235,24 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     audio["supportsPinOverride"] = SupportsConfigurableAudioInputPin();
 
     auto topology = root["topology"].to<JsonObject>();
-    topology["width"] = GetMatrixWidth();
-    topology["height"] = GetMatrixHeight();
-    topology["serpentine"] = IsMatrixSerpentine();
-    topology["layout"] = GetLayout() == LayoutType::IndividualStrips ? "individualStrips" : "matrix";
+    // Read-only summary for display/back-compat (e.g. formatTopologySummary() client-side) -
+    // "matrix" | "individualStrips" | "mixed". Never parsed as input; per-channel shape is the
+    // only way to actually change the topology now.
+    topology["layout"] = GetLayoutSummary();
 
-    // For individual-strip layouts, expose width as the longest strip and height as 1 so the
-    // existing preview/stat cards (which assume a rectangular pixel grid) keep working. The
-    // real per-channel counts live in topology.stripLengths below.
-    if (GetLayout() == LayoutType::IndividualStrips)
+    auto channels = topology["channels"].to<JsonArray>();
+    for (size_t i = 0; i < runtimeTopology.channels.size(); ++i)
     {
-        uint16_t maxStripLength = 0;
-        for (size_t i = 0; i < GetChannelCount() && i < runtimeTopology.stripLengths.size(); ++i)
-            maxStripLength = std::max(maxStripLength, runtimeTopology.stripLengths[i]);
-        if (maxStripLength > 0)
-        {
-            topology["width"] = maxStripLength;
-            topology["height"] = 1;
-        }
+        const auto& ch = runtimeTopology.channels[i];
+        auto channelObj = channels.add<JsonObject>();
+        channelObj["shape"] = ch.shape == ChannelShape::Matrix ? "matrix" : "strip";
+        channelObj["stripLength"] = ch.stripLength;
+        channelObj["matrixWidth"] = ch.matrixWidth;
+        channelObj["matrixHeight"] = ch.matrixHeight;
+        channelObj["matrixSerpentine"] = ch.matrixSerpentine;
+        channelObj["matrixOrigin"] = MatrixOriginName(ch.origin);
+        channelObj["matrixAxis"] = SerpentineAxisName(ch.axis);
     }
-
-    auto stripLengths = topology["stripLengths"].to<JsonArray>();
-    for (auto length : runtimeTopology.stripLengths)
-        stripLengths.add(length);
 
     topology["ledCount"] = GetActiveLEDCount();
     topology["liveApply"] = SupportsLiveTopology();
@@ -266,19 +294,10 @@ void DeviceConfig::SerializeUnifiedSettingsSchema(JsonObject root) const
     topology["compiledMaxLEDs"] = GetCompiledLEDCount();
     topology["liveApply"] = SupportsLiveTopology();
     topology["rejectMessage"] = DeviceConfigInternal::RecompileNeededMessage();
-
-    // HUB75 panels have a fixed matrix layout baked into the firmware, so the layout selector
-    // can only meaningfully stay on Matrix there. Strip builds expose both options.
-    auto supportedLayouts = topology["supportedLayouts"].to<JsonArray>();
-    if (IsHub75Build())
-    {
-        supportedLayouts.add("matrix");
-    }
-    else
-    {
-        supportedLayouts.add("matrix");
-        supportedLayouts.add("individualStrips");
-    }
+    // HUB75 panels have a fixed matrix layout baked into the firmware and never expose
+    // per-channel topology settings at all (see the IsHub75Build() gate in
+    // deviceconfig_settings_specs.cpp); non-HUB75 builds get one channel{i}Shape/dims/origin/
+    // axis set of settings per compiled channel, with options inline on those specs.
     topology["compiledMaxChannels"] = GetCompiledChannelCount();
     topology["compiledMaxStripLength"] = GetCompiledLEDCount();
 
@@ -388,50 +407,66 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
     if (root["topology"].is<JsonObjectConst>())
     {
         auto topology = root["topology"].as<JsonObjectConst>();
-        auto [requestedWidth, widthMessage] = ParseTopologyDimension(topology, "width");
-        if (!requestedWidth.has_value() && !widthMessage.isEmpty())
-            return { false, widthMessage };
-        if (requestedWidth.has_value())
+        // HUB75 never accepts per-channel topology (it's always the compiled panel) - a stray
+        // request carrying topology.channels is defensively rejected rather than silently ignored.
+        if (topology["channels"].is<JsonArrayConst>())
         {
-            out.requestedRuntimeConfig.topology.width = requestedWidth.value();
-            out.runtimeConfigTouched = true;
-        }
+            if (IsHub75Build())
+                return { false, DeviceConfigInternal::RecompileNeededMessage() };
 
-        auto [requestedHeight, heightMessage] = ParseTopologyDimension(topology, "height");
-        if (!requestedHeight.has_value() && !heightMessage.isEmpty())
-            return { false, heightMessage };
-        if (requestedHeight.has_value())
-        {
-            out.requestedRuntimeConfig.topology.height = requestedHeight.value();
-            out.runtimeConfigTouched = true;
-        }
-        if (topology["serpentine"].is<bool>())
-        {
-            out.requestedRuntimeConfig.topology.serpentine = topology["serpentine"].as<bool>();
-            out.runtimeConfigTouched = true;
-        }
-        if (topology["layout"].is<String>())
-        {
-            const auto layoutName = topology["layout"].as<String>();
-            if (layoutName == "individualStrips" || layoutName == "individual")
-                out.requestedRuntimeConfig.topology.layout = LayoutType::IndividualStrips;
-            else
-                out.requestedRuntimeConfig.topology.layout = LayoutType::Matrix;
-            out.runtimeConfigTouched = true;
-        }
-        if (topology["stripLengths"].is<JsonArrayConst>())
-        {
-            auto lengths = topology["stripLengths"].as<JsonArrayConst>();
-            for (size_t i = 0; i < out.requestedRuntimeConfig.topology.stripLengths.size() && i < lengths.size(); ++i)
+            auto channels = topology["channels"].as<JsonArrayConst>();
+            auto& targetChannels = out.requestedRuntimeConfig.topology.channels;
+            for (size_t i = 0; i < targetChannels.size() && i < channels.size(); ++i)
             {
-                if (lengths[i].is<int>())
+                if (!channels[i].is<JsonObjectConst>())
+                    continue;
+
+                auto channelObj = channels[i].as<JsonObjectConst>();
+                auto& ch = targetChannels[i];
+
+                if (channelObj["shape"].is<String>())
                 {
-                    const int requested = lengths[i].as<int>();
-                    if (requested < 0)
-                        return { false, String("topology.stripLengths[") + i + "] must be a positive integer" };
-                    if (requested > std::numeric_limits<uint16_t>::max())
-                        return { false, String("topology.stripLengths[") + i + "] is too large" };
-                    out.requestedRuntimeConfig.topology.stripLengths[i] = static_cast<uint16_t>(requested);
+                    const auto shapeName = channelObj["shape"].as<String>();
+                    if (shapeName != "strip" && shapeName != "matrix")
+                        return { false, String("topology.channels[") + i + "].shape must be \"strip\" or \"matrix\"" };
+                    ch.shape = shapeName == "matrix" ? ChannelShape::Matrix : ChannelShape::Strip;
+                }
+
+                auto [requestedStripLength, stripLengthMessage] = ParseTopologyDimension(channelObj, "stripLength");
+                if (!requestedStripLength.has_value() && !stripLengthMessage.isEmpty())
+                    return { false, String("topology.channels[") + i + "]." + stripLengthMessage };
+                if (requestedStripLength.has_value())
+                    ch.stripLength = requestedStripLength.value();
+
+                auto [requestedWidth, widthMessage] = ParseTopologyDimension(channelObj, "matrixWidth");
+                if (!requestedWidth.has_value() && !widthMessage.isEmpty())
+                    return { false, String("topology.channels[") + i + "]." + widthMessage };
+                if (requestedWidth.has_value())
+                    ch.matrixWidth = requestedWidth.value();
+
+                auto [requestedHeight, heightMessage] = ParseTopologyDimension(channelObj, "matrixHeight");
+                if (!requestedHeight.has_value() && !heightMessage.isEmpty())
+                    return { false, String("topology.channels[") + i + "]." + heightMessage };
+                if (requestedHeight.has_value())
+                    ch.matrixHeight = requestedHeight.value();
+
+                if (channelObj["matrixSerpentine"].is<bool>())
+                    ch.matrixSerpentine = channelObj["matrixSerpentine"].as<bool>();
+
+                if (channelObj["matrixOrigin"].is<String>())
+                {
+                    auto parsedOrigin = ParseMatrixOriginName(channelObj["matrixOrigin"].as<String>());
+                    if (!parsedOrigin.has_value())
+                        return { false, String("topology.channels[") + i + "].matrixOrigin is invalid" };
+                    ch.origin = parsedOrigin.value();
+                }
+
+                if (channelObj["matrixAxis"].is<String>())
+                {
+                    auto parsedAxis = ParseSerpentineAxisName(channelObj["matrixAxis"].as<String>());
+                    if (!parsedAxis.has_value())
+                        return { false, String("topology.channels[") + i + "].matrixAxis is invalid" };
+                    ch.axis = parsedAxis.value();
                 }
             }
             out.runtimeConfigTouched = true;

@@ -334,25 +334,23 @@ SuccessResultWithMessage SystemContainer::ApplyRuntimeConfiguration()
     {
         if (_ptrDevices)
         {
-            // Reconfiguring the already-owned GFX objects keeps the rest of the renderer stable while
-            // still letting the active strip layout, channel count, and pins move inside build limits.
-            // For matrix layouts every device is sized to width*height. For individual-strip layouts
-            // each device is sized to its own per-strip length with height=1 (no serpentine).
-            const bool individualStrips = config.GetLayout() == DeviceConfig::LayoutType::IndividualStrips;
-            const auto matrixWidth = config.GetMatrixWidth();
-            const auto matrixHeight = config.GetMatrixHeight();
-            const auto serpentine = config.IsMatrixSerpentine();
+            // Reconfiguring the already-owned GFX objects keeps the rest of the renderer stable
+            // while still letting the active topology, channel count, and pins move inside build
+            // limits. Each device gets its own channel's shape/dims/serpentine/origin/axis - a
+            // Strip-shaped channel is just width=length, height=1, serpentine=false.
             for (size_t i = 0; i < _ptrDevices->size(); ++i)
             {
                 auto& device = (*_ptrDevices)[i];
-                if (individualStrips)
+                const auto& channelTopology = config.GetChannelTopology(i);
+                if (channelTopology.shape == DeviceConfig::ChannelShape::Matrix)
                 {
-                    const uint16_t stripLength = config.GetChannelLEDCount(i);
-                    device->ConfigureTopology(stripLength, 1, false);
+                    device->ConfigureTopology(channelTopology.matrixWidth, channelTopology.matrixHeight,
+                                               channelTopology.matrixSerpentine, channelTopology.origin, channelTopology.axis);
                 }
                 else
                 {
-                    device->ConfigureTopology(matrixWidth, matrixHeight, serpentine);
+                    const uint16_t stripLength = config.GetChannelLEDCount(i);
+                    device->ConfigureTopology(stripLength, 1, false);
                 }
             }
         }

@@ -134,6 +134,8 @@ protected:
     size_t _height;
     size_t _ledcount;
     bool _serpentine = true;
+    MatrixOrigin _origin = MatrixOrigin::TopLeft;
+    SerpentineAxis _axis = SerpentineAxis::Vertical;
 
     // 32 Entries in the 5-bit gamma table
     static const uint8_t gamma5[32];
@@ -262,7 +264,9 @@ public:
         return _serpentine;
     }
 
-    virtual void ConfigureTopology(size_t width, size_t height, bool serpentine);
+    virtual void ConfigureTopology(size_t width, size_t height, bool serpentine,
+                                    MatrixOrigin origin = MatrixOrigin::TopLeft,
+                                    SerpentineAxis axis = SerpentineAxis::Vertical);
 
     static uint8_t beatcos8(accum88 beats_per_minute, uint8_t lowest = 0, uint8_t highest = 255, uint32_t timebase = 0, uint8_t phase_offset = 0);
     static uint8_t mapsin8(uint8_t theta, uint8_t lowest = 0, uint8_t highest = 255);
@@ -298,7 +302,9 @@ public:
     }
 
     // Matrices that are built from individually addressable strips like WS2812b generally
-    // follow a boustrophedon layout as follows:
+    // follow a boustrophedon (serpentine/zigzag) layout, e.g. with the default origin
+    // (TopLeft) and axis (Vertical, today's only historical behavior - each physical strip
+    // is one column):
     //
     //     0 >  1 >  2 >  3 >  4
     //                         |
@@ -310,23 +316,38 @@ public:
     //     |
     //    (etc.)
     //
-    // If your matrix uses a different approach, you can override this function and implement it
-    // in the XY() function of your class
+    // _origin/_axis (set via ConfigureTopology) generalize this to any corner LED 0 is wired
+    // to and either axis for the zigzag. First, flip x/y so (0,0) is logically the origin
+    // corner; then, depending on axis, treat either columns (Vertical) or rows (Horizontal) as
+    // the physical strips and zigzag alternate ones. If your matrix uses a still-different
+    // addressing scheme entirely, override this function in your class instead.
 
     __attribute__((always_inline))
     inline virtual uint16_t xy(uint16_t x, uint16_t y) const noexcept
     {
-        if (_serpentine && (x & 0x01))
+        const uint16_t lx = (_origin == MatrixOrigin::TopRight || _origin == MatrixOrigin::BottomRight)
+                                ? static_cast<uint16_t>(_width - 1 - x) : x;
+        const uint16_t ly = (_origin == MatrixOrigin::BottomLeft || _origin == MatrixOrigin::BottomRight)
+                                ? static_cast<uint16_t>(_height - 1 - y) : y;
+
+        uint16_t stripIndex, posInStrip, stripLen;
+        if (_axis == SerpentineAxis::Vertical)
         {
-            // Odd rows run backwards
-            uint8_t reverseY = (_height - 1) - y;
-            return (x * _height) + reverseY;
+            stripIndex = lx;
+            posInStrip = ly;
+            stripLen = _height;
         }
         else
         {
-            // Even rows run forwards
-            return (x * _height) + y;
+            stripIndex = ly;
+            posInStrip = lx;
+            stripLen = _width;
         }
+
+        if (_serpentine && (stripIndex & 0x01))
+            posInStrip = stripLen - 1 - posInStrip;
+
+        return stripIndex * stripLen + posInStrip;
     }
 
     // Retrieves the color of a pixel at the specified X and Y coordinates.

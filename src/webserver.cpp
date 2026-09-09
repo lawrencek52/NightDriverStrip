@@ -332,10 +332,14 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
     {
         j["MATRIX_WIDTH"]               = MATRIX_WIDTH;
         j["MATRIX_HEIGHT"]              = MATRIX_HEIGHT;
+        // These three report channel 0's configured matrix dims (0/0/false if channel 0 isn't
+        // Matrix-shaped) - there's no single global answer once channels can differ in shape.
+        // CONFIGURED_LAYOUT ("matrix"/"individualStrips"/"mixed") is the accurate summary.
         j["CONFIGURED_MATRIX_WIDTH"]    = deviceConfig.GetMatrixWidth();
         j["CONFIGURED_MATRIX_HEIGHT"]   = deviceConfig.GetMatrixHeight();
         j["CONFIGURED_MATRIX_SERPENTINE"] = deviceConfig.IsMatrixSerpentine();
         j["CONFIGURED_NUM_LEDS"]        = deviceConfig.GetActiveLEDCount();
+        j["CONFIGURED_LAYOUT"]          = deviceConfig.GetLayoutSummary();
         j["ACTIVE_MATRIX_WIDTH"]        = activeWidth;
         j["ACTIVE_MATRIX_HEIGHT"]       = activeHeight;
         j["ACTIVE_MATRIX_SERPENTINE"]   = activeSerpentine;
@@ -343,9 +347,7 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         j["COMPILED_NUM_LEDS"]          = DeviceConfig::GetCompiledLEDCount();
         j["COMPILED_NUM_CHANNELS"]      = DeviceConfig::GetCompiledChannelCount();
         j["ACTIVE_NUM_CHANNELS"]        = deviceConfig.GetChannelCount();
-        j["ACTIVE_LAYOUT"]              = deviceConfig.GetLayout() == DeviceConfig::LayoutType::IndividualStrips
-                                                ? "individualStrips"
-                                                : "matrix";
+        j["ACTIVE_LAYOUT"]              = deviceConfig.GetLayoutSummary();
         auto stripLengths = j["ACTIVE_STRIP_LENGTHS"].to<JsonArray>();
         for (size_t i = 0; i < DeviceConfig::GetCompiledChannelCount(); ++i)
             stripLengths.add(deviceConfig.GetChannelLEDCount(i));

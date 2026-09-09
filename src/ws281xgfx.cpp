@@ -222,7 +222,7 @@ WS281xGFX::~WS281xGFX()
     #endif
 }
 
-void WS281xGFX::ConfigureTopology(size_t width, size_t height, bool serpentine)
+void WS281xGFX::ConfigureTopology(size_t width, size_t height, bool serpentine, MatrixOrigin origin, SerpentineAxis axis)
 {
     const auto newLEDCount = width * height;
     if (newLEDCount != GetLEDCount())
@@ -249,7 +249,7 @@ void WS281xGFX::ConfigureTopology(size_t width, size_t height, bool serpentine)
         #endif
     }
 
-    GFXBase::ConfigureTopology(width, height, serpentine);
+    GFXBase::ConfigureTopology(width, height, serpentine, origin, axis);
 }
 
 void WS281xGFX::InitializeHardware(std::vector<std::shared_ptr<GFXBase>>& devices)
@@ -264,8 +264,12 @@ void WS281xGFX::InitializeHardware(std::vector<std::shared_ptr<GFXBase>>& device
     for (int i = 0; i < NUM_CHANNELS; i++)
     {
         debugW("Allocating strip GFX for channel %d", i);
-        auto device = make_shared_psram<WS281xGFX>(deviceConfig.GetMatrixWidth(), deviceConfig.GetMatrixHeight());
-        device->ConfigureTopology(deviceConfig.GetMatrixWidth(), deviceConfig.GetMatrixHeight(), deviceConfig.IsMatrixSerpentine());
+        const auto& channelTopology = deviceConfig.GetChannelTopology(i);
+        const size_t width = channelTopology.shape == DeviceConfig::ChannelShape::Matrix ? channelTopology.matrixWidth : channelTopology.stripLength;
+        const size_t height = channelTopology.shape == DeviceConfig::ChannelShape::Matrix ? channelTopology.matrixHeight : 1;
+        const bool serpentine = channelTopology.shape == DeviceConfig::ChannelShape::Matrix && channelTopology.matrixSerpentine;
+        auto device = make_shared_psram<WS281xGFX>(width, height);
+        device->ConfigureTopology(width, height, serpentine, channelTopology.origin, channelTopology.axis);
         devices.push_back(device);
     }
 

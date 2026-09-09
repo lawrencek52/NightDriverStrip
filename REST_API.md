@@ -258,6 +258,7 @@ When changing settings:
 - All parameters are optional. Only settings that are sent in the POST parameters are modified. All other settings are unchanged.
 - No validation of values provided takes place. There is a [separate endpoint with which an individual setting can be changed after validation](#set-setting-with-validation).
 - Changed settings will be applied immediately, but it takes a few seconds before they are persisted beyond restarts.
+- Topology (matrix/strip shape per channel, dimensions, serpentine, origin, axis) is not settable through this endpoint - `matrixWidth`, `matrixHeight`, `matrixSerpentine`, `matrixLayout`, `matrixStripLengths`, and `matrixStripLength{N}` are rejected with an error pointing at [`POST /api/v1/settings`](#change-unified-device-settings) and `topology.channels[i].*` instead. This changed once a channel could be independently a strip or its own matrix - there's no flat field name left that unambiguously means "set this for the device".
 
 #### Retrieve device settings
 
@@ -330,9 +331,13 @@ The `device.schedule.*` fields configure a nightly brightness schedule (dim, the
 | URL | `/api/v1/settings` | |
 | Method | POST | |
 | Body | JSON object | |
-| Parameters | `topology.width` | Matrix width. |
-| | `topology.height` | Matrix height. |
-| | `topology.serpentine` | Whether the LED matrix is wired in serpentine order. |
+| Parameters | `topology.channels[i].shape` | `"strip"` or `"matrix"` - each channel (output pin) is independently a plain strip or its own matrix. HUB75 builds never accept this (they're always a single compile-time-fixed matrix); posting it to a HUB75 build is rejected. |
+| | `topology.channels[i].stripLength` | Number of LEDs on channel `i`. Used when that channel's `shape` is `"strip"`. |
+| | `topology.channels[i].matrixWidth` | Matrix width for channel `i`. Used when that channel's `shape` is `"matrix"`; `matrixWidth * matrixHeight` must stay within the compiled per-channel LED budget. |
+| | `topology.channels[i].matrixHeight` | Matrix height for channel `i`. Same budget constraint as `matrixWidth`. |
+| | `topology.channels[i].matrixSerpentine` | Whether channel `i`'s matrix wiring zigzags (`true`/`false`). Used when that channel's `shape` is `"matrix"`. |
+| | `topology.channels[i].matrixOrigin` | Which corner of channel `i`'s matrix LED 0 is wired to: `"topLeft"`, `"topRight"`, `"bottomLeft"`, or `"bottomRight"`. |
+| | `topology.channels[i].matrixAxis` | Which axis channel `i`'s serpentine zigzag runs along: `"horizontal"` (each physical strip is a row) or `"vertical"` (each physical strip is a column - the historical/only behavior before per-channel topology existed). |
 | | `outputs.driver` | Output driver name. Must be one of the values from `allowedDrivers` in the schema response. |
 | | `outputs.ws281x.channelCount` | Number of active WS281x channels. |
 | | `outputs.ws281x.colorOrder` | WS281x color component order. Must be one of the values from `allowedColorOrders` in the schema response. |
@@ -354,7 +359,7 @@ The `device.schedule.*` fields configure a nightly brightness schedule (dim, the
 | | `device.secondColor` | Secondary LED color, as a 24-bit integer. |
 | | `device.applyGlobalColors` | Whether the global/secondary color override is active (`true`/`false`). |
 | | `device.clearGlobalColor` | Set to `true` to clear the current global color override. |
-| | `device.schedule.enabled` | Whether the nightly brightness schedule below is active (`true`/`false`). |
+| | `device.schedule.enabled` | Whether the nightly brightness schedule below is active (`true`/`false`). While enabled, if the system clock hasn't been synced via NTP yet (e.g. briefly after a reboot), the schedule defaults to fully off rather than guessing - it can't tell what time it is, and off is the safer failure mode for a feature whose whole purpose is not leaving lights on unexpectedly. |
 | | `device.schedule.dimPercent` | Brightness percentage (0-100) to dim to during the dim window, before going fully off. |
 | | `device.schedule.dimTime` | When dimming starts. Either `"HH:MM"` (24-hour, minute must be a 15-minute step: 00/15/30/45) or one of `"sunrise"`/`"sunset"`/`"noon"`/`"midnight"`. |
 | | `device.schedule.offTime` | When the display turns fully off. Same format as `dimTime`. |

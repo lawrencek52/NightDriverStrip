@@ -45,6 +45,7 @@
 #include "deviceconfig_internal.h"
 #include "effectmanager.h"
 #include "jsonserializer.h"
+#include "ntptimeclient.h"
 #include "systemcontainer.h"
 
 extern const char timezones_start[] asm("_binary_config_timezones_json_start");
@@ -141,73 +142,122 @@ void DeviceConfig::LogRuntimeConfig(const char* reason) const
         activeClockPins += String(runtimeOutputs.clockPins[i]);
     }
 
-    debugI("Runtime config (%s): driver=%s layout=%s matrix=%ux%u leds=%u serpentine=%d channels=%u colorOrder=%s audioPin=%d",
+    String channelSummary;
+    for (size_t i = 0; i < runtimeOutputs.channelCount && i < runtimeTopology.channels.size(); ++i)
+    {
+        const auto& ch = runtimeTopology.channels[i];
+        if (!channelSummary.isEmpty())
+            channelSummary += ' ';
+        if (ch.shape == ChannelShape::Matrix)
+            channelSummary += String("ch") + i + "=matrix:" + ch.matrixWidth + "x" + ch.matrixHeight
+                + ":serp=" + ch.matrixSerpentine + ":origin=" + static_cast<int>(ch.origin) + ":axis=" + static_cast<int>(ch.axis);
+        else
+            channelSummary += String("ch") + i + "=strip:" + ch.stripLength;
+    }
+
+    debugI("Runtime config (%s): driver=%s leds=%u channels=%u colorOrder=%s audioPin=%d",
            reason,
            DriverName(runtimeOutputs.driver),
-           runtimeTopology.layout == LayoutType::IndividualStrips ? "individualStrips" : "matrix",
-           runtimeTopology.width,
-           runtimeTopology.height,
            static_cast<unsigned>(GetActiveLEDCount()),
-           runtimeTopology.serpentine,
-            static_cast<unsigned>(runtimeOutputs.channelCount),
+           static_cast<unsigned>(runtimeOutputs.channelCount),
            GetColorOrderName(runtimeOutputs.colorOrder).c_str(),
            audioInputPin);
-
-    if (runtimeTopology.layout == LayoutType::IndividualStrips)
-    {
-        String lengths;
-        for (size_t i = 0; i < runtimeOutputs.channelCount && i < runtimeTopology.stripLengths.size(); ++i)
-        {
-            if (!lengths.isEmpty())
-                lengths += ',';
-            lengths += String(runtimeTopology.stripLengths[i]);
-        }
-        debugI("Runtime config strip lengths (%s): %s", reason, lengths.c_str());
-    }
+    debugI("Runtime config channels (%s): %s", reason, channelSummary.c_str());
 
     debugI("Runtime config pins (%s): data=%s clock=%s", reason, activePins.c_str(), activeClockPins.c_str());
 }
 
 uint16_t DeviceConfig::GetChannelLEDCount(size_t channel) const
 {
-    if (channel >= runtimeOutputs.channelCount || channel >= runtimeTopology.stripLengths.size())
+    if (channel >= runtimeOutputs.channelCount || channel >= runtimeTopology.channels.size())
         return 0;
 
-    if (runtimeTopology.layout == LayoutType::IndividualStrips)
-        return runtimeTopology.stripLengths[channel];
-
-    return static_cast<uint16_t>(static_cast<size_t>(runtimeTopology.width) * runtimeTopology.height);
+    const auto& ch = runtimeTopology.channels[channel];
+    return ch.shape == ChannelShape::Strip
+        ? ch.stripLength
+        : static_cast<uint16_t>(static_cast<size_t>(ch.matrixWidth) * ch.matrixHeight);
 }
 
 size_t DeviceConfig::GetActiveLEDCount() const
 {
-    if (runtimeTopology.layout == LayoutType::IndividualStrips)
+    size_t total = 0;
+    const size_t count = std::min(runtimeOutputs.channelCount, runtimeTopology.channels.size());
+    for (size_t i = 0; i < count; ++i)
+        total += GetChannelLEDCount(i);
+    return total;
+}
+
+bool DeviceConfig::IsUniformMatrix() const
+{
+    const size_t count = std::min(runtimeOutputs.channelCount, runtimeTopology.channels.size());
+    if (count == 0)
+        return false;
+
+    const auto& first = runtimeTopology.channels[0];
+    if (first.shape != ChannelShape::Matrix)
+        return false;
+
+    for (size_t i = 1; i < count; ++i)
     {
-        size_t total = 0;
-        const size_t count = std::min(runtimeOutputs.channelCount, runtimeTopology.stripLengths.size());
-        for (size_t i = 0; i < count; ++i)
-            total += runtimeTopology.stripLengths[i];
-        return total;
+        const auto& ch = runtimeTopology.channels[i];
+        if (ch.shape != ChannelShape::Matrix
+            || ch.matrixWidth != first.matrixWidth
+            || ch.matrixHeight != first.matrixHeight
+            || ch.matrixSerpentine != first.matrixSerpentine
+            || ch.origin != first.origin
+            || ch.axis != first.axis)
+            return false;
     }
 
-    return static_cast<size_t>(runtimeTopology.width) * runtimeTopology.height;
+    return true;
+}
+
+bool DeviceConfig::AreAllChannelsStrip() const
+{
+    const size_t count = std::min(runtimeOutputs.channelCount, runtimeTopology.channels.size());
+    if (count == 0)
+        return false;
+
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (runtimeTopology.channels[i].shape != ChannelShape::Strip)
+            return false;
+    }
+
+    return true;
+}
+
+String DeviceConfig::GetLayoutSummary() const
+{
+    if (IsHub75Build() || IsUniformMatrix())
+        return "matrix";
+    if (AreAllChannelsStrip())
+        return "individualStrips";
+    return "mixed";
 }
 
 DeviceConfig::DeviceConfig()
 {
-    runtimeTopology.serpentine = !IsHub75Build();
-    runtimeTopology.layout = LayoutType::Matrix;
     runtimeOutputs.driver = GetCompiledOutputDriver();
     runtimeOutputs.channelCount = NUM_CHANNELS;
     runtimeOutputs.outputPins = GetCompiledWS281xPins();
     runtimeOutputs.clockPins = GetCompiledAPA102ClockPins();
     runtimeOutputs.colorOrder = GetCompiledWS281xColorOrder();
 
-    // Default every per-strip length to the compiled matrix LED count. For Matrix layouts this
-    // value is unused, but it keeps a freshly-saved config sensible if the user later flips to
-    // IndividualStrips without first editing each channel.
+    // Default every channel to a matrix matching the compiled panel dims (mirroring the old
+    // global-Matrix default), with a sensible strip length carried along too in case the user
+    // later flips a channel to Strip without first editing it.
     const uint16_t defaultStripLength = static_cast<uint16_t>(GetCompiledLEDCount());
-    runtimeTopology.stripLengths.fill(defaultStripLength);
+    for (auto& ch : runtimeTopology.channels)
+    {
+        ch.shape = ChannelShape::Matrix;
+        ch.matrixWidth = MATRIX_WIDTH;
+        ch.matrixHeight = MATRIX_HEIGHT;
+        ch.matrixSerpentine = !IsHub75Build();
+        ch.origin = MatrixOrigin::TopLeft;
+        ch.axis = SerpentineAxis::Vertical;
+        ch.stripLength = defaultStripLength;
+    }
 
     writerIndex = g_ptrSystem->GetJSONWriter().RegisterWriter(
         [this] { assert(SaveToJSONFile(DEVICE_CONFIG_FILE, *this)); }
@@ -268,18 +318,29 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
     jsonDoc[ScheduleLatLongAutoTag] = scheduleLatLongAuto;
     jsonDoc[ScheduleLatitudeTag] = scheduleLatitude;
     jsonDoc[ScheduleLongitudeTag] = scheduleLongitude;
+    jsonDoc[ScheduleLatLongStatusTag] = scheduleLatLongStatus;
     jsonDoc[GlobalColorTag] = globalColor;
     jsonDoc[ApplyGlobalColorsTag] = applyGlobalColors;
     jsonDoc[SecondColorTag] = secondColor;
     jsonDoc[AudioInputPinTag] = audioInputPin;
-    jsonDoc[MatrixWidthTag] = runtimeTopology.width;
-    jsonDoc[MatrixHeightTag] = runtimeTopology.height;
-    jsonDoc[MatrixSerpentineTag] = runtimeTopology.serpentine;
-    jsonDoc[MatrixLayoutTag] = runtimeTopology.layout == LayoutType::IndividualStrips ? "individualStrips" : "matrix";
 
-    auto stripLengths = jsonDoc[MatrixStripLengthsTag].to<JsonArray>();
-    for (auto length : runtimeTopology.stripLengths)
-        stripLengths.add(length);
+    auto channelShapes = jsonDoc[ChannelShapesTag].to<JsonArray>();
+    auto channelStripLengths = jsonDoc[ChannelStripLengthsTag].to<JsonArray>();
+    auto channelMatrixWidths = jsonDoc[ChannelMatrixWidthsTag].to<JsonArray>();
+    auto channelMatrixHeights = jsonDoc[ChannelMatrixHeightsTag].to<JsonArray>();
+    auto channelMatrixSerpentines = jsonDoc[ChannelMatrixSerpentinesTag].to<JsonArray>();
+    auto channelMatrixOrigins = jsonDoc[ChannelMatrixOriginsTag].to<JsonArray>();
+    auto channelMatrixAxes = jsonDoc[ChannelMatrixAxesTag].to<JsonArray>();
+    for (const auto& ch : runtimeTopology.channels)
+    {
+        channelShapes.add(static_cast<uint8_t>(ch.shape));
+        channelStripLengths.add(ch.stripLength);
+        channelMatrixWidths.add(ch.matrixWidth);
+        channelMatrixHeights.add(ch.matrixHeight);
+        channelMatrixSerpentines.add(ch.matrixSerpentine);
+        channelMatrixOrigins.add(static_cast<uint8_t>(ch.origin));
+        channelMatrixAxes.add(static_cast<uint8_t>(ch.axis));
+    }
 
     jsonDoc[OutputDriverTag] = DriverName(runtimeOutputs.driver);
     jsonDoc[WS281xChannelCountTag] = runtimeOutputs.channelCount;
@@ -362,6 +423,7 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
     SetIfPresentIn(jsonObject, scheduleLatLongAuto, ScheduleLatLongAutoTag);
     SetIfPresentIn(jsonObject, scheduleLatitude, ScheduleLatitudeTag);
     SetIfPresentIn(jsonObject, scheduleLongitude, ScheduleLongitudeTag);
+    SetIfPresentIn(jsonObject, scheduleLatLongStatus, ScheduleLatLongStatusTag);
     SetIfPresentIn(jsonObject, globalColor, GlobalColorTag);
     SetIfPresentIn(jsonObject, applyGlobalColors, ApplyGlobalColorsTag);
     SetIfPresentIn(jsonObject, secondColor, SecondColorTag);
@@ -374,67 +436,122 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
 
     RuntimeConfig updated = GetRuntimeConfig();
 
-    SetIfPresentIn(jsonObject, updated.topology.width, MatrixWidthTag);
-    SetIfPresentIn(jsonObject, updated.topology.height, MatrixHeightTag);
-    SetIfPresentIn(jsonObject, updated.topology.serpentine, MatrixSerpentineTag);
-
-    if (jsonObject[MatrixLayoutTag].is<String>())
+    if (jsonObject[ChannelShapesTag].is<JsonArrayConst>())
     {
-        const auto layoutName = jsonObject[MatrixLayoutTag].as<String>();
-        if (layoutName == "individualStrips" || layoutName == "individual")
-            updated.topology.layout = LayoutType::IndividualStrips;
-        else
-            updated.topology.layout = LayoutType::Matrix;
-    }
+        // Current format: parallel per-channel arrays.
+        auto shapes = jsonObject[ChannelShapesTag].as<JsonArrayConst>();
+        auto stripLengths = jsonObject[ChannelStripLengthsTag].as<JsonArrayConst>();
+        auto matrixWidths = jsonObject[ChannelMatrixWidthsTag].as<JsonArrayConst>();
+        auto matrixHeights = jsonObject[ChannelMatrixHeightsTag].as<JsonArrayConst>();
+        auto matrixSerpentines = jsonObject[ChannelMatrixSerpentinesTag].as<JsonArrayConst>();
+        auto matrixOrigins = jsonObject[ChannelMatrixOriginsTag].as<JsonArrayConst>();
+        auto matrixAxes = jsonObject[ChannelMatrixAxesTag].as<JsonArrayConst>();
 
-    if (jsonObject[MatrixStripLengthsTag].is<JsonArrayConst>())
-    {
-        auto lengths = jsonObject[MatrixStripLengthsTag].as<JsonArrayConst>();
-        for (size_t i = 0; i < updated.topology.stripLengths.size() && i < lengths.size(); ++i)
+        for (size_t i = 0; i < updated.topology.channels.size() && i < shapes.size(); ++i)
         {
-            if (lengths[i].is<int>())
-                updated.topology.stripLengths[i] = static_cast<uint16_t>(lengths[i].as<int>());
+            auto& ch = updated.topology.channels[i];
+            if (shapes[i].is<int>())
+                ch.shape = static_cast<uint8_t>(shapes[i].as<int>()) == static_cast<uint8_t>(ChannelShape::Matrix)
+                    ? ChannelShape::Matrix : ChannelShape::Strip;
+            if (i < stripLengths.size() && stripLengths[i].is<int>())
+                ch.stripLength = static_cast<uint16_t>(stripLengths[i].as<int>());
+            if (i < matrixWidths.size() && matrixWidths[i].is<int>())
+                ch.matrixWidth = static_cast<uint16_t>(matrixWidths[i].as<int>());
+            if (i < matrixHeights.size() && matrixHeights[i].is<int>())
+                ch.matrixHeight = static_cast<uint16_t>(matrixHeights[i].as<int>());
+            if (i < matrixSerpentines.size() && matrixSerpentines[i].is<bool>())
+                ch.matrixSerpentine = matrixSerpentines[i].as<bool>();
+            if (i < matrixOrigins.size() && matrixOrigins[i].is<int>())
+                ch.origin = static_cast<MatrixOrigin>(std::clamp(matrixOrigins[i].as<int>(), 0, 3));
+            if (i < matrixAxes.size() && matrixAxes[i].is<int>())
+                ch.axis = static_cast<SerpentineAxis>(std::clamp(matrixAxes[i].as<int>(), 0, 1));
         }
     }
-    else
+    else if (jsonObject[LegacyMatrixWidthTag].is<int>() || jsonObject[LegacyMatrixLayoutTag].is<String>()
+             || jsonObject[LegacyMatrixStripLengthsTag].is<JsonArrayConst>())
     {
-        // Backward compatibility: older configs persisted per-strip lengths as matrixStripLength0,
-        // matrixStripLength1, ... (one tag per index). Pull those in if the unified array is missing.
-        for (size_t i = 0; i < updated.topology.stripLengths.size(); ++i)
+        // One-way migration from a pre-per-channel-topology config: old layout==Matrix becomes
+        // every channel Matrix-shaped with the old global width/height/serpentine (origin/axis
+        // default to TopLeft/Vertical, which is exactly what the old hardcoded xy() formula did
+        // - zero behavior change); old layout==IndividualStrips becomes every channel Strip-shaped
+        // with its own old per-channel length. The next SaveToJSON() writes the new format only.
+        bool legacyIsIndividualStrips = false;
+        if (jsonObject[LegacyMatrixLayoutTag].is<String>())
         {
-            const String tag = String(MatrixStripLength0Tag) + String(static_cast<unsigned>(i));
-            if (jsonObject[tag].is<int>())
-                updated.topology.stripLengths[i] = static_cast<uint16_t>(jsonObject[tag].as<int>());
+            const auto layoutName = jsonObject[LegacyMatrixLayoutTag].as<String>();
+            legacyIsIndividualStrips = (layoutName == "individualStrips" || layoutName == "individual");
         }
-    }
 
-    // Sanitize any persisted values that look like they were never initialised. When the
-    // RuntimeTopology struct grew to carry the new stripLengths field, on devices upgraded
-    // from a build that didn't include that field the JSON document could end up with the
-    // extra slots holding whatever bytes happened to be in memory. Validate each value's
-    // range here and, if it's clearly not a real setting, snap it back to the compile-time
-    // default before it gets re-serialised back to SPIFFS or shipped out as part of the
-    // unified /settings or /api/v1/settings response.
-    const uint16_t compiledMaxLEDs = static_cast<uint16_t>(GetCompiledLEDCount());
-    if (updated.topology.width == 0 || updated.topology.width > compiledMaxLEDs)
-    {
-        debugW("Persisted matrixWidth %u out of range, resetting to %u", updated.topology.width, MATRIX_WIDTH);
-        updated.topology.width = MATRIX_WIDTH;
-    }
-    if (updated.topology.height == 0 || updated.topology.height > compiledMaxLEDs)
-    {
-        debugW("Persisted matrixHeight %u out of range, resetting to %u", updated.topology.height, MATRIX_HEIGHT);
-        updated.topology.height = MATRIX_HEIGHT;
-    }
-    {
-        const uint16_t defaultStripLength = compiledMaxLEDs;
-        for (auto& length : updated.topology.stripLengths)
+        uint16_t legacyWidth = MATRIX_WIDTH, legacyHeight = MATRIX_HEIGHT;
+        bool legacySerpentine = !IsHub75Build();
+        SetIfPresentIn(jsonObject, legacyWidth, LegacyMatrixWidthTag);
+        SetIfPresentIn(jsonObject, legacyHeight, LegacyMatrixHeightTag);
+        SetIfPresentIn(jsonObject, legacySerpentine, LegacyMatrixSerpentineTag);
+
+        std::array<uint16_t, NUM_CHANNELS> legacyStripLengths{};
+        legacyStripLengths.fill(static_cast<uint16_t>(GetCompiledLEDCount()));
+        if (jsonObject[LegacyMatrixStripLengthsTag].is<JsonArrayConst>())
         {
-            if (length == 0 || length > compiledMaxLEDs)
+            auto lengths = jsonObject[LegacyMatrixStripLengthsTag].as<JsonArrayConst>();
+            for (size_t i = 0; i < legacyStripLengths.size() && i < lengths.size(); ++i)
             {
-                debugW("Persisted stripLength %u out of range, resetting to %u", length, defaultStripLength);
-                length = defaultStripLength;
+                if (lengths[i].is<int>())
+                    legacyStripLengths[i] = static_cast<uint16_t>(lengths[i].as<int>());
             }
+        }
+        else
+        {
+            // Even older configs persisted per-strip lengths as matrixStripLength0,
+            // matrixStripLength1, ... (one tag per index).
+            for (size_t i = 0; i < legacyStripLengths.size(); ++i)
+            {
+                const String tag = String(LegacyMatrixStripLength0Tag) + String(static_cast<unsigned>(i));
+                if (jsonObject[tag].is<int>())
+                    legacyStripLengths[i] = static_cast<uint16_t>(jsonObject[tag].as<int>());
+            }
+        }
+
+        for (size_t i = 0; i < updated.topology.channels.size(); ++i)
+        {
+            auto& ch = updated.topology.channels[i];
+            if (legacyIsIndividualStrips)
+            {
+                ch.shape = ChannelShape::Strip;
+                ch.stripLength = legacyStripLengths[i];
+            }
+            else
+            {
+                ch.shape = ChannelShape::Matrix;
+                ch.matrixWidth = legacyWidth;
+                ch.matrixHeight = legacyHeight;
+                ch.matrixSerpentine = legacySerpentine;
+            }
+            ch.origin = MatrixOrigin::TopLeft;
+            ch.axis = SerpentineAxis::Vertical;
+        }
+    }
+    // else: no persisted topology at all (brand new device) - keep the constructor defaults.
+
+    // Sanitize any persisted values that look out of range (e.g. from a build with different
+    // compiled limits) before they get re-serialised back to SPIFFS or shipped out as part of
+    // the unified /settings or /api/v1/settings response.
+    const uint16_t compiledMaxLEDs = static_cast<uint16_t>(GetCompiledLEDCount());
+    for (auto& ch : updated.topology.channels)
+    {
+        if (ch.stripLength == 0 || ch.stripLength > compiledMaxLEDs)
+        {
+            debugW("Persisted channel stripLength %u out of range, resetting to %u", ch.stripLength, compiledMaxLEDs);
+            ch.stripLength = compiledMaxLEDs;
+        }
+        if (ch.matrixWidth == 0 || ch.matrixWidth > compiledMaxLEDs)
+        {
+            debugW("Persisted channel matrixWidth %u out of range, resetting to %u", ch.matrixWidth, MATRIX_WIDTH);
+            ch.matrixWidth = MATRIX_WIDTH;
+        }
+        if (ch.matrixHeight == 0 || ch.matrixHeight > compiledMaxLEDs)
+        {
+            debugW("Persisted channel matrixHeight %u out of range, resetting to %u", ch.matrixHeight, MATRIX_HEIGHT);
+            ch.matrixHeight = MATRIX_HEIGHT;
         }
     }
 
@@ -814,6 +931,17 @@ uint8_t DeviceConfig::GetScheduleDimFactor255() const
 {
     if (!scheduleEnabled)
         return 255;
+
+#if ENABLE_NTP
+    // Without a valid wall-clock time there's no way to know whether "now" falls inside
+    // the dim/off window - time(nullptr) reads back whatever the RTC defaults to (often
+    // close to epoch 0) until NTP has synced at least once after boot. Defaulting to
+    // "normal" here would risk exactly what this feature exists to prevent (lights left
+    // on overnight) for however long that takes; defaulting to off is the safe failure
+    // mode, and it self-corrects within seconds of NTP completing.
+    if (!NTPTimeClient::HasClockBeenSet())
+        return 0;
+#endif
 
     const uint16_t dimMinutes = ResolveScheduleMinutes(scheduleDimTime);
     const uint16_t offMinutes = ResolveScheduleMinutes(scheduleOffTime);

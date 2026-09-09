@@ -433,7 +433,7 @@ struct SettingSpec
     bool RequiresReboot = false;
 
     // Canonical dotted path in the unified settings document (/api/v1/settings),
-    // e.g. "topology.width" or "outputs.ws281x.colorOrder". Settings whose ApiPath
+    // e.g. "topology.channels[0].shape" or "outputs.ws281x.colorOrder". Settings whose ApiPath
     // is null are written through the legacy /settings endpoint by name.
     const char* ApiPath = nullptr;
 

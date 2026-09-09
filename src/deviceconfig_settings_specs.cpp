@@ -23,13 +23,14 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         // can temporarily require both old and new contiguous blocks.
         constexpr size_t kFixedSettingSpecCapacity = 37;
         const auto compiledChannelCount = GetCompiledChannelCount();
-        // Each compiled channel contributes a per-channel pin spec (two on APA102) plus a
-        // per-channel strip-length spec, so budget headroom for both.
+        // Each compiled channel contributes a per-channel pin spec (two on APA102) plus 7
+        // per-channel topology specs (shape, stripLength, matrixWidth, matrixHeight,
+        // matrixSerpentine, matrixOrigin, matrixAxis) on non-HUB75 builds.
         const size_t outputSettingSpecCount = compiledChannelCount
         #if USE_APA102
-            * 3
+            * 9
         #else
-            * 2
+            * 8
         #endif
         ;
         settingSpecs.reserve(kFixedSettingSpecCapacity + outputSettingSpecCount);
@@ -68,12 +69,16 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         }));
 
         // ---- location section ----------------------------------------------
+        // Explicit Priority on every entry here: specs without one sort alphabetically by
+        // friendly name, which would scatter the geography-related fields (location, country,
+        // lat/long/auto-detect) out of their natural reading order.
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name         = LocationTag,
             .FriendlyName = "Location",
             .Description  = "The location (city or postal code) where the device is located.",
             .Type         = SettingSpec::SettingType::String,
             .Section      = kSectionLocation,
+            .Priority     = 0,
             .ApiPath      = "device.location"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
@@ -82,6 +87,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Description  = "Indicates if the value for the \"Location\" setting is a postal code (yes if checked) or not.",
             .Type         = SettingSpec::SettingType::Boolean,
             .Section      = kSectionLocation,
+            .Priority     = 1,
             .ApiPath      = "device.locationIsZip"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
@@ -91,9 +97,46 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
                             "code for the country that the device is located in.",
             .Type         = SettingSpec::SettingType::String,
             .Section      = kSectionLocation,
+            .Priority     = 2,
             .ApiPath      = "device.countryCode",
             .Widget       = SettingSpec::WidgetKind::Select,
             .Options      = SettingSpec::OptionsSource::IntlCountryCodes
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = ScheduleLatLongAutoTag,
+            .FriendlyName = "Auto-detect from location",
+            .Description  = "Automatically resolve latitude/longitude from the Location/Country code settings above (needs an Open Weather API key). "
+                            "Turn this off to enter latitude/longitude manually below.",
+            .Type         = SettingSpec::SettingType::Boolean,
+            .Section      = kSectionLocation,
+            .Priority     = 3,
+            .ApiPath      = "device.schedule.latLongAuto"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleLatitudeTag,
+            .FriendlyName  = "Latitude",
+            .Description   = "Device location latitude in degrees (-90 to 90), used only to compute sunrise/sunset for the nightly schedule. "
+                            "Ignored (and overwritten) while \"Auto-detect from location\" is on.",
+            .Type          = SettingSpec::SettingType::Float,
+            .HasValidation = true,
+            .MinimumValue  = -90.0,
+            .MaximumValue  = 90.0,
+            .Section       = kSectionLocation,
+            .Priority      = 4,
+            .ApiPath       = "device.schedule.latitude"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name          = ScheduleLongitudeTag,
+            .FriendlyName  = "Longitude",
+            .Description   = "Device location longitude in degrees (-180 to 180), used only to compute sunrise/sunset for the nightly schedule. "
+                            "Ignored (and overwritten) while \"Auto-detect from location\" is on.",
+            .Type          = SettingSpec::SettingType::Float,
+            .HasValidation = true,
+            .MinimumValue  = -180.0,
+            .MaximumValue  = 180.0,
+            .Section       = kSectionLocation,
+            .Priority      = 5,
+            .ApiPath       = "device.schedule.longitude"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name               = TimeZoneTag,
@@ -102,6 +145,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
                                   "The list of available timezone identifiers can be found in the <a href=\"/timezones.json\">timezones.json</a> file.",
             .Type               = SettingSpec::SettingType::String,
             .Section            = kSectionLocation,
+            .Priority           = 6,
             .ApiPath            = "device.timeZone",
             .Widget             = SettingSpec::WidgetKind::Select,
             .Options            = SettingSpec::OptionsSource::ExternalTimeZones,
@@ -244,30 +288,18 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         }));
 
         // ---- schedule section ------------------------------------------------
+        // Explicit Priority throughout, in the order these are expected to be changed most
+        // to least often: enable, the three times, the dim percentage, then the read-only
+        // result of the (now Location-panel-owned) lat/long auto-detect, kept here since
+        // it's the sunrise/sunset times above that actually depend on it being accurate.
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name         = ScheduleEnabledTag,
             .FriendlyName = "Enable nightly schedule",
             .Description  = "Automatically dim and turn the display off overnight, and back on in the morning.",
             .Type         = SettingSpec::SettingType::Boolean,
             .Section      = kSectionSchedule,
+            .Priority     = 0,
             .ApiPath      = "device.schedule.enabled"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name          = ScheduleDimPercentTag,
-            .FriendlyName  = "Dim to",
-            .Description   = "Brightness percentage to dim to during the dim window, before going fully off.",
-            .Type          = SettingSpec::SettingType::Integer,
-            .HasValidation = true,
-            .MinimumValue  = 0.0,
-            .MaximumValue  = 100.0,
-            .Section       = kSectionSchedule,
-            .ApiPath       = "device.schedule.dimPercent",
-            .Widget        = SettingSpec::WidgetKind::Slider,
-            .DisplayRawMin = 0.0,
-            .DisplayRawMax = 100.0,
-            .DisplayMin    = 0.0,
-            .DisplayMax    = 100.0,
-            .DisplaySuffix = "%"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name          = ScheduleDimTimeTag,
@@ -276,6 +308,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Type          = SettingSpec::SettingType::String,
             .HasValidation = true,
             .Section       = kSectionSchedule,
+            .Priority      = 1,
             .ApiPath       = "device.schedule.dimTime",
             .Widget        = SettingSpec::WidgetKind::TimeSchedule,
             .OptionValues  = {"sunrise", "sunset", "noon", "midnight"},
@@ -288,6 +321,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Type          = SettingSpec::SettingType::String,
             .HasValidation = true,
             .Section       = kSectionSchedule,
+            .Priority      = 2,
             .ApiPath       = "device.schedule.offTime",
             .Widget        = SettingSpec::WidgetKind::TimeSchedule,
             .OptionValues  = {"sunrise", "sunset", "noon", "midnight"},
@@ -300,152 +334,196 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Type          = SettingSpec::SettingType::String,
             .HasValidation = true,
             .Section       = kSectionSchedule,
+            .Priority      = 3,
             .ApiPath       = "device.schedule.onTime",
             .Widget        = SettingSpec::WidgetKind::TimeSchedule,
             .OptionValues  = {"sunrise", "sunset", "noon", "midnight"},
             .OptionLabels  = {"Sunrise", "Sunset", "Noon", "Midnight"}
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name         = ScheduleLatLongAutoTag,
-            .FriendlyName = "Auto-detect from location",
-            .Description  = "Automatically resolve latitude/longitude from the Location/Country code settings above (needs an Open Weather API key). "
-                            "Turn this off to enter latitude/longitude manually below.",
-            .Type         = SettingSpec::SettingType::Boolean,
-            .Section      = kSectionSchedule,
-            .ApiPath      = "device.schedule.latLongAuto"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name          = ScheduleLatitudeTag,
-            .FriendlyName  = "Latitude",
-            .Description   = "Device location latitude in degrees (-90 to 90), used only to compute sunrise/sunset for the schedule above. "
-                            "Ignored (and overwritten) while \"Auto-detect from location\" is on.",
-            .Type          = SettingSpec::SettingType::Float,
+            .Name          = ScheduleDimPercentTag,
+            .FriendlyName  = "Dim to",
+            .Description   = "Brightness percentage to dim to during the dim window, before going fully off.",
+            .Type          = SettingSpec::SettingType::Integer,
             .HasValidation = true,
-            .MinimumValue  = -90.0,
-            .MaximumValue  = 90.0,
+            .MinimumValue  = 0.0,
+            .MaximumValue  = 100.0,
             .Section       = kSectionSchedule,
-            .ApiPath       = "device.schedule.latitude"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name          = ScheduleLongitudeTag,
-            .FriendlyName  = "Longitude",
-            .Description   = "Device location longitude in degrees (-180 to 180), used only to compute sunrise/sunset for the schedule above. "
-                            "Ignored (and overwritten) while \"Auto-detect from location\" is on.",
-            .Type          = SettingSpec::SettingType::Float,
-            .HasValidation = true,
-            .MinimumValue  = -180.0,
-            .MaximumValue  = 180.0,
-            .Section       = kSectionSchedule,
-            .ApiPath       = "device.schedule.longitude"
+            .Priority      = 4,
+            .ApiPath       = "device.schedule.dimPercent",
+            .Widget        = SettingSpec::WidgetKind::Slider,
+            .DisplayRawMin = 0.0,
+            .DisplayRawMax = 100.0,
+            .DisplayMin    = 0.0,
+            .DisplayMax    = 100.0,
+            .DisplaySuffix = "%"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name         = "scheduleLatLongStatus",
             .FriendlyName = "Auto-detect result",
-            .Description  = "Result of the most recent latitude/longitude auto-detect attempt (blank until one has run). "
-                            "A failure here doesn't block saving other settings - it just means latitude/longitude above were left unchanged.",
+            .Description  = "Result of the most recent latitude/longitude auto-detect attempt (blank until one has run; see the "
+                            "Location panel). A failure here doesn't block saving other settings, but it does mean sunrise/sunset "
+                            "times above may be inaccurate.",
             .Type         = SettingSpec::SettingType::String,
             .Access       = SettingSpec::SettingAccess::ReadOnly,
             .Section      = kSectionSchedule,
+            .Priority     = 5,
             .ApiPath      = "device.schedule.latLongStatus"
         }));
 
         // ---- topology section ----------------------------------------------
-        // Layout selector: matrix (one width x height grid mirrored on every channel) versus
-        // individual strips (each channel carries its own LED count). The choice drives whether
-        // the matrix width/height/serpentine fields or the per-strip length fields are honored.
-        // HUB75 builds pin this to "matrix" via the schema's supportedLayouts list.
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name         = MatrixLayoutTag,
-            .FriendlyName = "Layout",
-            .Description  = "How the channels are laid out. Matrix means every channel carries the same width x height pixel grid. "
-                            "Individual strips means each channel is its own strip with its own LED count, set in the per-strip length fields below.",
-            .Type         = SettingSpec::SettingType::String,
-            .Section      = kSectionTopology,
-            .Priority     = 0,
-            .ApiPath      = "topology.layout",
-            .Widget       = SettingSpec::WidgetKind::Select,
-            .Options      = SettingSpec::OptionsSource::SchemaPath,
-            .OptionValues = {"matrix", "individualStrips"},
-            .OptionLabels = {"Matrix", "Individual strips"},
-            .OptionsSchemaPath = "topology.supportedLayouts"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name         = MatrixWidthTag,
-            .FriendlyName = "Matrix width",
-            .Description  = "Active matrix width. Used when the layout is set to Matrix; ignored for individual strips. WS281x builds validate this by total LED capacity, so width * height must stay within the compiled LED budget.",
-            .Type         = SettingSpec::SettingType::PositiveBigInteger,
-            .MinimumValue = 1.0,
-            .MaximumValue = (double)GetCompiledLEDCount(),
-            .Section      = kSectionTopology,
-            .Priority     = 1,
-            .ApiPath      = "topology.width"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name         = MatrixHeightTag,
-            .FriendlyName = "Matrix height",
-            .Description  = "Active matrix height. Used when the layout is set to Matrix; ignored for individual strips. WS281x builds validate this by total LED capacity, so width * height must stay within the compiled LED budget.",
-            .Type         = SettingSpec::SettingType::PositiveBigInteger,
-            .MinimumValue = 1.0,
-            .MaximumValue = (double)GetCompiledLEDCount(),
-            .Section      = kSectionTopology,
-            .Priority     = 2,
-            .ApiPath      = "topology.height"
-        }));
-        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-            .Name         = MatrixSerpentineTag,
-            .FriendlyName = "Serpentine layout",
-            .Description  = "Controls the logical XY mapping for strip-based matrices. HUB75 ignores this because its panel mapping is build-defined.",
-            .Type         = SettingSpec::SettingType::Boolean,
-            .Section      = kSectionTopology,
-            .Priority     = 3,
-            .ApiPath      = "topology.serpentine"
-        }));
-
-        // Per-strip length specs. We emit one spec per compiled channel so the UI can render a
-        // numbered input for every GPIO pin even if not all channels are active. The web form
-        // flags these as conditional on the layout being "individualStrips" and the channel
-        // being below the active channel count.
-        //
-        // Implementation note: the per-strip labels are built once into std::string instances
-        // owned by a small member vector rather than going through the Arduino String +
-        // emplace_back dance. The Arduino String SSO buffer can hold onto stack garbage when
-        // the constructor default-initializes the union before init() runs, and that garbage
-        // would leak through c_str() if the SSO/heap flag ever ended up wrong; using
-        // std::string here avoids that whole class of bug because std::string never claims a
-        // value unless copy-constructed from real data. The member vector (instead of a
-        // local) keeps the std::string instances alive for the lifetime of DeviceConfig so
-        // the c_str() pointers stored in the SettingSpec objects remain valid.
-        if (_stripLengthStrings.size() < static_cast<size_t>(compiledChannelCount) * 4)
+        // Each output channel independently is a plain strip or its own matrix - one spec set
+        // per compiled channel, always generated (even for inactive channels) so the UI can
+        // render every channel's row; the web form flags shape-specific fields as conditional
+        // on that channel's own shape select and on the channel being below the active count.
+        // HUB75 is always a single compile-time-fixed matrix and never exposes any of this.
+        if (!IsHub75Build())
         {
-            _stripLengthStrings.resize(compiledChannelCount * 4);
-        }
+            static constexpr const char* kShapeValues[] = { "strip", "matrix" };
+            static constexpr const char* kShapeLabels[] = { "Strip", "Matrix" };
+            static constexpr const char* kOriginValues[] = { "topLeft", "topRight", "bottomLeft", "bottomRight" };
+            static constexpr const char* kOriginLabels[] = { "Top-left", "Top-right", "Bottom-left", "Bottom-right" };
+            static constexpr const char* kAxisValues[] = { "horizontal", "vertical" };
+            static constexpr const char* kAxisLabels[] = { "Horizontal (each strip is a row)", "Vertical (each strip is a column)" };
 
-        for (size_t i = 0; i < compiledChannelCount; ++i)
-        {
-            char buf[160];
-            snprintf(buf, sizeof(buf), "%s%zu", MatrixStripLength0Tag, i);
-            _stripLengthStrings[i * 4 + 0] = buf;
-            snprintf(buf, sizeof(buf), "Strip %zu LEDs", i + 1);
-            _stripLengthStrings[i * 4 + 1] = buf;
-            snprintf(buf, sizeof(buf), "Number of LEDs on strip %zu. Used when the layout is set to Individual strips; ignored otherwise.", i + 1);
-            _stripLengthStrings[i * 4 + 2] = buf;
-            snprintf(buf, sizeof(buf), "topology.stripLengths[%zu]", i);
-            _stripLengthStrings[i * 4 + 3] = buf;
-        }
+            // 7 fields per channel (shape, stripLength, matrixWidth, matrixHeight,
+            // matrixSerpentine, matrixOrigin, matrixAxis), 4 strings per field (name,
+            // friendlyName, description, apiPath). See the class-level comment on
+            // _channelTopologyStrings (deviceconfig.h) for why these live in a pre-sized
+            // member vector rather than locals - the SettingSpec objects keep raw c_str()
+            // pointers into it for the life of the device, so it must never reallocate
+            // mid-loop.
+            constexpr size_t kFieldsPerChannel = 7;
+            constexpr size_t kStringsPerField = 4;
+            constexpr size_t kStringsPerChannel = kFieldsPerChannel * kStringsPerField;
 
-        for (size_t i = 0; i < compiledChannelCount; ++i)
-        {
-            settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-                .Name         = _stripLengthStrings[i * 4 + 0].c_str(),
-                .FriendlyName = _stripLengthStrings[i * 4 + 1].c_str(),
-                .Description  = _stripLengthStrings[i * 4 + 2].c_str(),
-                .Type         = SettingSpec::SettingType::PositiveBigInteger,
-                .MinimumValue = 1.0,
-                .MaximumValue = (double)GetCompiledLEDCount(),
-                .Section      = kSectionTopology,
-                .Priority     = 4 + static_cast<int>(i),
-                .ApiPath      = _stripLengthStrings[i * 4 + 3].c_str()
-            }));
+            if (_channelTopologyStrings.size() < static_cast<size_t>(compiledChannelCount) * kStringsPerChannel)
+                _channelTopologyStrings.resize(compiledChannelCount * kStringsPerChannel);
+
+            auto fieldSlot = [this, kStringsPerChannel, kStringsPerField](size_t channel, size_t field, size_t str) -> std::string&
+            {
+                return _channelTopologyStrings[channel * kStringsPerChannel + field * kStringsPerField + str];
+            };
+
+            for (size_t i = 0; i < compiledChannelCount; ++i)
+            {
+                char buf[220];
+
+                snprintf(buf, sizeof(buf), "channel%zuShape", i); fieldSlot(i, 0, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu shape", i + 1); fieldSlot(i, 0, 1) = buf;
+                snprintf(buf, sizeof(buf), "Whether channel %zu is a plain strip or its own matrix.", i + 1); fieldSlot(i, 0, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].shape", i); fieldSlot(i, 0, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 0, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 0, 1).c_str(),
+                    .Description  = fieldSlot(i, 0, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::String,
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 0),
+                    .ApiPath      = fieldSlot(i, 0, 3).c_str(),
+                    .Widget       = SettingSpec::WidgetKind::Select,
+                    .OptionValues = { kShapeValues[0], kShapeValues[1] },
+                    .OptionLabels = { kShapeLabels[0], kShapeLabels[1] }
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuStripLength", i); fieldSlot(i, 1, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu strip length", i + 1); fieldSlot(i, 1, 1) = buf;
+                snprintf(buf, sizeof(buf), "Number of LEDs on channel %zu. Used when this channel's shape is Strip.", i + 1); fieldSlot(i, 1, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].stripLength", i); fieldSlot(i, 1, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 1, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 1, 1).c_str(),
+                    .Description  = fieldSlot(i, 1, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::PositiveBigInteger,
+                    .MinimumValue = 1.0,
+                    .MaximumValue = (double)GetCompiledLEDCount(),
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 1),
+                    .ApiPath      = fieldSlot(i, 1, 3).c_str()
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuMatrixWidth", i); fieldSlot(i, 2, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu matrix width", i + 1); fieldSlot(i, 2, 1) = buf;
+                snprintf(buf, sizeof(buf), "Matrix width for channel %zu. Used when this channel's shape is Matrix; "
+                                            "width * height must stay within the compiled per-channel LED budget.", i + 1); fieldSlot(i, 2, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].matrixWidth", i); fieldSlot(i, 2, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 2, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 2, 1).c_str(),
+                    .Description  = fieldSlot(i, 2, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::PositiveBigInteger,
+                    .MinimumValue = 1.0,
+                    .MaximumValue = (double)GetCompiledLEDCount(),
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 2),
+                    .ApiPath      = fieldSlot(i, 2, 3).c_str()
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuMatrixHeight", i); fieldSlot(i, 3, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu matrix height", i + 1); fieldSlot(i, 3, 1) = buf;
+                snprintf(buf, sizeof(buf), "Matrix height for channel %zu. Used when this channel's shape is Matrix; "
+                                            "width * height must stay within the compiled per-channel LED budget.", i + 1); fieldSlot(i, 3, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].matrixHeight", i); fieldSlot(i, 3, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 3, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 3, 1).c_str(),
+                    .Description  = fieldSlot(i, 3, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::PositiveBigInteger,
+                    .MinimumValue = 1.0,
+                    .MaximumValue = (double)GetCompiledLEDCount(),
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 3),
+                    .ApiPath      = fieldSlot(i, 3, 3).c_str()
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuMatrixSerpentine", i); fieldSlot(i, 4, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu serpentine", i + 1); fieldSlot(i, 4, 1) = buf;
+                snprintf(buf, sizeof(buf), "Whether channel %zu's matrix wiring zigzags. Used when this channel's shape is Matrix.", i + 1); fieldSlot(i, 4, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].matrixSerpentine", i); fieldSlot(i, 4, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 4, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 4, 1).c_str(),
+                    .Description  = fieldSlot(i, 4, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::Boolean,
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 4),
+                    .ApiPath      = fieldSlot(i, 4, 3).c_str()
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuMatrixOrigin", i); fieldSlot(i, 5, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu matrix origin", i + 1); fieldSlot(i, 5, 1) = buf;
+                snprintf(buf, sizeof(buf), "Which corner of channel %zu's matrix LED 0 is wired to. Used when this channel's shape is Matrix.", i + 1); fieldSlot(i, 5, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].matrixOrigin", i); fieldSlot(i, 5, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 5, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 5, 1).c_str(),
+                    .Description  = fieldSlot(i, 5, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::String,
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 5),
+                    .ApiPath      = fieldSlot(i, 5, 3).c_str(),
+                    .Widget       = SettingSpec::WidgetKind::Select,
+                    .OptionValues = { kOriginValues[0], kOriginValues[1], kOriginValues[2], kOriginValues[3] },
+                    .OptionLabels = { kOriginLabels[0], kOriginLabels[1], kOriginLabels[2], kOriginLabels[3] }
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuMatrixAxis", i); fieldSlot(i, 6, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu serpentine axis", i + 1); fieldSlot(i, 6, 1) = buf;
+                snprintf(buf, sizeof(buf), "Which axis channel %zu's serpentine zigzag runs along. Used when this channel's shape is Matrix.", i + 1); fieldSlot(i, 6, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].matrixAxis", i); fieldSlot(i, 6, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 6, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 6, 1).c_str(),
+                    .Description  = fieldSlot(i, 6, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::String,
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 6),
+                    .ApiPath      = fieldSlot(i, 6, 3).c_str(),
+                    .Widget       = SettingSpec::WidgetKind::Select,
+                    .OptionValues = { kAxisValues[0], kAxisValues[1] },
+                    .OptionLabels = { kAxisLabels[0], kAxisLabels[1] }
+                }));
+            }
         }
 
         // ---- output section -------------------------------------------------
