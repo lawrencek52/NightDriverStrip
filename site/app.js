@@ -472,9 +472,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       : `${effectList.length} effects / active ${currentIndex}`;
   }
 
-  // Compact human-readable topology summary for the home-page card. Matrix layouts show "WxH / N
-  // leds", individual-strip layouts show "N strips / M leds". Falls back to the matrix form
-  // when no per-strip lengths have been published yet (older firmware).
+  // Compact human-readable topology summary for the home-page card. Uniform matrix layouts show
+  // "WxH / N leds", all-strip layouts show "N strips / M leds", and a mix of the two ("mixed")
+  // shows "N channels / M leds" since there's no single WxH or strip-count that describes it.
   function formatTopologySummary(staticStats) {
     if (!staticStats) {
       return "--";
@@ -484,6 +484,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       const lengths = staticStats.ACTIVE_STRIP_LENGTHS.filter((value) => Number(value) > 0);
       const stripCount = lengths.length || Number(staticStats.ACTIVE_NUM_CHANNELS || 0);
       return `${stripCount} strips / ${totalLeds} leds`;
+    }
+    if (staticStats.ACTIVE_LAYOUT === "mixed") {
+      return `${Number(staticStats.ACTIVE_NUM_CHANNELS || 0)} channels / ${totalLeds} leds`;
     }
     return `${staticStats.ACTIVE_MATRIX_WIDTH}x${staticStats.ACTIVE_MATRIX_HEIGHT} / ${totalLeds} leds`;
   }
@@ -861,11 +864,18 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       section.specs.forEach((spec) => {
         const currentValue = getCurrentDeviceSettingValue(spec);
         const fieldNode = buildSettingField(spec, currentValue, state.deviceDraft, state.deviceErrors, false);
-        // Mark topology fields with their layout precondition so the conditional toggle
-        // (CSS class on the section) can hide/show them after rendering.
-        const conditionalLayout = getTopologyConditionalLayout(spec);
-        if (conditionalLayout) {
-          fieldNode.dataset.layoutFor = conditionalLayout;
+        // Mark per-channel topology fields with their owning channel + required shape (e.g.
+        // "2:matrix") so the per-channel visibility toggle can hide/show them independently.
+        const shapeFor = getTopologyConditionalLayout(spec);
+        if (shapeFor) {
+          fieldNode.dataset.shapeFor = shapeFor;
+        }
+        // Tag each channel's own Shape select (spec.name driven, not the mangled DOM "name"
+        // attribute buildSettingField assigns) so the change listener below knows which fields
+        // should trigger a full re-render.
+        const shapeSelectMatch = typeof spec.name === "string" && spec.name.match(/^channel(\d+)Shape$/);
+        if (shapeSelectMatch) {
+          fieldNode.dataset.channelShapeField = shapeSelectMatch[1];
         }
         bodyNode.appendChild(fieldNode);
       });
@@ -878,9 +888,10 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     attachMatrixLayoutRerender();
   }
 
-  // The Layout select needs to redraw the topology section on change so its sibling fields
-  // (matrix width/height vs. per-strip lengths) hide or show immediately. setDraftValue keeps
-  // the value, then a delegated change listener on the device form runs a full re-render.
+  // Each channel's own Shape select needs to redraw the topology section on change so that
+  // channel's sibling fields (matrix dims/serpentine/origin/axis vs. strip length) hide or show
+  // immediately. setDraftValue keeps the value, then a delegated change listener on the device
+  // form runs a full re-render.
   let _matrixLayoutRerenderWired = false;
   function attachMatrixLayoutRerender() {
     if (_matrixLayoutRerenderWired || !els.deviceSettingsForm) {
@@ -891,10 +902,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       if (!target || target.tagName !== "SELECT" || !target.closest(".settings-section-topology")) {
         return;
       }
-      // Only the layout select carries the two option values we care about; anything else in
-      // the topology section should just update the draft without redrawing.
-      const options = Array.from(target.options || []).map((option) => option.value);
-      if (!options.includes("matrix") || !options.includes("individualStrips")) {
+      // Only a channel's Shape select needs a full redraw; every other field in the topology
+      // section can just update the draft in place.
+      if (!target.closest("[data-channel-shape-field]")) {
         return;
       }
       renderSettingsForm();
@@ -902,36 +912,48 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     _matrixLayoutRerenderWired = true;
   }
 
-  // Returns "matrix" or "individualStrips" if this topology spec only makes sense when the
-  // active layout is in the matching mode, otherwise null. Used to attach data-layout-for to
-  // each field so the visibility toggle can flip a CSS class on the topology section.
+  // Returns "N:strip" or "N:matrix" (channel index + the shape this field requires) if this
+  // per-channel topology spec only makes sense for that channel's current shape, otherwise
+  // null. Used to tag each field with data-shape-for so the per-channel visibility toggle can
+  // show/hide it independently of every other channel's own shape.
   function getTopologyConditionalLayout(spec) {
-    if (!spec || !spec.name) {
+    if (!spec || typeof spec.name !== "string") {
       return null;
     }
-    if (spec.name === "matrixWidth" || spec.name === "matrixHeight" || spec.name === "matrixSerpentine") {
-      return "matrix";
+    const stripMatch = spec.name.match(/^channel(\d+)StripLength$/);
+    if (stripMatch) {
+      return `${stripMatch[1]}:strip`;
     }
-    if (typeof spec.name === "string" && spec.name.startsWith("matrixStripLength") && spec.name !== "matrixStripLengths") {
-      return "individualStrips";
+    const matrixMatch = spec.name.match(/^channel(\d+)Matrix(Width|Height|Serpentine|Origin|Axis)$/);
+    if (matrixMatch) {
+      return `${matrixMatch[1]}:matrix`;
     }
     return null;
   }
 
-  // Toggle the .is-matrix / .is-individual-strips classes on the topology section based on the
-  // current value of the matrixLayout setting (draft wins over saved). The CSS uses these to
-  // hide fields whose data-layout-for doesn't match.
+  // For every channel{i}Shape field in the topology section, hide that channel's sibling
+  // fields (data-shape-for="i:strip" or "i:matrix") whenever they don't match the channel's own
+  // current shape (draft wins over saved). Each channel toggles independently, unlike the old
+  // single section-wide matrix/individualStrips class.
   function syncTopologyLayoutVisibility() {
     const sectionNode = els.deviceSettingsForm.querySelector(".settings-section-topology");
     if (!sectionNode) {
       return;
     }
 
-    const layoutValue = getDraftOrCurrentDeviceSetting("matrixLayout");
-    const mode = (layoutValue === "individualStrips" || layoutValue === "individual") ? "individualStrips" : "matrix";
+    const channelModes = {};
+    sectionNode.querySelectorAll("[data-shape-for]").forEach((fieldNode) => {
+      const [channel] = fieldNode.dataset.shapeFor.split(":");
+      if (channelModes[channel] === undefined) {
+        const shapeValue = getDraftOrCurrentDeviceSetting(`channel${channel}Shape`);
+        channelModes[channel] = shapeValue === "matrix" ? "matrix" : "strip";
+      }
+    });
 
-    sectionNode.classList.toggle("is-matrix", mode === "matrix");
-    sectionNode.classList.toggle("is-individual-strips", mode === "individualStrips");
+    sectionNode.querySelectorAll("[data-shape-for]").forEach((fieldNode) => {
+      const [channel, requiredShape] = fieldNode.dataset.shapeFor.split(":");
+      fieldNode.hidden = channelModes[channel] !== requiredShape;
+    });
   }
 
   // Section catalog comes from /api/v1/settings/schema (root.sections). The UI
@@ -1319,7 +1341,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
     const isSetPath = spec.apiPath ? `${spec.apiPath}Set` : null;
     const isSet = isSetPath ? !!readJsonPath(state.unifiedSettings, isSetPath) : false;
-    control.placeholder = isSet ? "•••••••••••• (leave blank to keep current key)" : "Not set";
+    control.placeholder = isSet ? "••••••••••••" : "Not set";
 
     control.addEventListener("change", () => {
       setDraftValue(control.value);
@@ -1735,64 +1757,54 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     return errors;
   }
 
+  // Each channel gets its own GFX frame buffer and its own DMA byte buffer, so the LED budget
+  // is PER CHANNEL, not shared across channels - and since a channel is independently a strip
+  // or its own matrix now, this checks each channel[i]Shape's own relevant field(s) rather than
+  // one global layout branch.
   function addTopologyValidationErrors(errors) {
     const maxLeds = getCompiledMaxLEDs();
     if (!maxLeds) {
       return;
     }
 
-    const layout = String(getDraftOrCurrentDeviceSetting("matrixLayout") || "matrix");
-    const individualStrips = layout === "individualStrips" || layout === "individual";
+    const specs = getOrderedDeviceSettingSpecs();
+    const shapeSpecs = specs.filter((spec) => typeof spec.name === "string" && /^channel\d+Shape$/.test(spec.name));
 
-    if (individualStrips) {
-      // Each channel gets its own GFX frame buffer and its own DMA byte buffer, so the
-      // constraint is PER STRIP, not the sum across strips. The per-strip length field
-      // names are matrixStripLength0 .. matrixStripLengthN-1. We attach the error to the
-      // offending strip's field rather than to the layout field, so the user sees exactly
-      // which strip needs to be brought down.
-      const specs = getOrderedDeviceSettingSpecs();
-      let firstOffender = null;
-      specs.forEach((spec) => {
-        if (typeof spec.name !== "string" || !spec.name.startsWith("matrixStripLength")) {
+    shapeSpecs.forEach((shapeSpec) => {
+      const channel = shapeSpec.name.match(/^channel(\d+)Shape$/)[1];
+      const shape = getDraftOrCurrentDeviceSetting(shapeSpec.name) === "matrix" ? "matrix" : "strip";
+
+      if (shape === "strip") {
+        const lengthName = `channel${channel}StripLength`;
+        const value = Number(getDraftOrCurrentDeviceSetting(lengthName));
+        if (!Number.isFinite(value) || value <= 0 || value <= maxLeds) {
           return;
         }
-        if (spec.name === "matrixStripLengths") {
-          return;
-        }
-        const value = Number(getDraftOrCurrentDeviceSetting(spec.name));
-        if (firstOffender || !Number.isFinite(value) || value <= 0) {
-          return;
-        }
-        if (value > maxLeds)
-        {
-          firstOffender = {
-            name: spec.name,
-            friendlyName: spec.friendlyName || spec.name,
-            value
-          };
-        }
-      });
-      if (firstOffender) {
-        const message = `${firstOffender.friendlyName} has ${firstOffender.value} LEDs, but this firmware supports up to ${maxLeds} LEDs per strip. Lower this strip or flash a build compiled for more LEDs per strip.`;
-        errors.set(firstOffender.name, message);
+        const lengthSpec = specs.find((spec) => spec.name === lengthName);
+        const friendlyName = (lengthSpec && lengthSpec.friendlyName) || lengthName;
+        errors.set(lengthName, `${friendlyName} has ${value} LEDs, but this firmware supports up to ${maxLeds} LEDs per channel. `
+          + "Lower this strip or flash a build compiled for more LEDs.");
+        return;
       }
-      return;
-    }
 
-    const width = Number(getDraftOrCurrentDeviceSetting("matrixWidth"));
-    const height = Number(getDraftOrCurrentDeviceSetting("matrixHeight"));
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-      return;
-    }
+      const widthName = `channel${channel}MatrixWidth`;
+      const heightName = `channel${channel}MatrixHeight`;
+      const width = Number(getDraftOrCurrentDeviceSetting(widthName));
+      const height = Number(getDraftOrCurrentDeviceSetting(heightName));
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return;
+      }
 
-    const requestedLeds = width * height;
-    if (requestedLeds <= maxLeds) {
-      return;
-    }
+      const requestedLeds = width * height;
+      if (requestedLeds <= maxLeds) {
+        return;
+      }
 
-    const message = `Matrix dimensions ${width} x ${height} require ${requestedLeds} LEDs, but this firmware supports ${maxLeds}. Lower width/height or flash a build compiled for more LEDs.`;
-    errors.set("matrixWidth", message);
-    errors.set("matrixHeight", message);
+      const message = `Channel ${Number(channel) + 1} matrix ${width} x ${height} requires ${requestedLeds} LEDs, but this firmware `
+        + `supports up to ${maxLeds} per channel. Lower the dimensions or flash a build compiled for more LEDs.`;
+      errors.set(widthName, message);
+      errors.set(heightName, message);
+    });
   }
 
   function getCompiledMaxLEDs() {
