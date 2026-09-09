@@ -328,14 +328,18 @@ namespace
             // refilled by hardware instead of a per-bit ISR, so channels no longer fight over the
             // tiny shared memory pool. See the RMT DMA note in the ESP-IDF docs.
             //
-            // Size the DMA buffer to hold the whole frame (1 symbol per bit), capped so a very
-            // long strip doesn't reserve unbounded SRAM. A strip that fits under the cap gets a
-            // buffer big enough that the hardware never needs a mid-transmission refill at all;
-            // longer strips still get 8x the headroom of a single 48-word block.
-            constexpr size_t kMaxDmaBufferBytes = 1024;
-            const size_t bufferBytes = std::min(byteCount, kMaxDmaBufferBytes);
+            // Size the DMA buffer to hold the *entire* frame (1 symbol per bit). Anything
+            // smaller forces the driver to refill the buffer from the ISR mid-transmission
+            // once the preloaded portion is exhausted; that refill is subject to the same
+            // interrupt-latency starvation described above and reliably corrupts the tail of
+            // long single-channel runs (e.g. a 512-pixel matrix glitching past pixel ~340,
+            // where a previous, smaller cap here ran out). Sizing to the whole frame means the
+            // hardware streams straight out of SRAM with no live refill, so no starvation
+            // window exists regardless of strip length. Per-channel SRAM cost is byteCount*32
+            // (e.g. ~48KB for a 512-pixel matrix at 3 bytes/pixel) - trivial next to the ESP32's
+            // internal SRAM budget for the channel counts/strip lengths this project targets.
             channelConfig.flags.with_dma = 1;
-            channelConfig.mem_block_symbols = std::max<size_t>(bufferBytes * 8, 64);
+            channelConfig.mem_block_symbols = std::max<size_t>(byteCount * 8, 64);
 #else
             channelConfig.mem_block_symbols = 96;  // grow in steps of SOC_RMT_MEM_WORDS_PER_CHANNEL (48)
 #endif
