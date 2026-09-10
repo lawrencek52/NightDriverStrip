@@ -164,7 +164,17 @@ void HUB75GFX::StartMatrix()
         A_PIN, B_PIN, C_PIN, D_PIN, E_PIN, LAT_PIN, OE_PIN, CLK_PIN
     };
 
-    HUB75_I2S_CFG config(MATRIX_WIDTH, MATRIX_HEIGHT, 1, pins);
+    // Chain length is however many HUB75_PANEL_RES_X-wide modules it takes to span
+    // MATRIX_WIDTH; only horizontal (left-to-right) chaining is supported - each
+    // module must be the full canvas height. See the HUB75_PANEL_RES_X/Y comment in
+    // globals.h.
+    static_assert(MATRIX_WIDTH % HUB75_PANEL_RES_X == 0,
+                   "MATRIX_WIDTH must be an exact multiple of HUB75_PANEL_RES_X");
+    static_assert(HUB75_PANEL_RES_Y == MATRIX_HEIGHT,
+                   "HUB75_PANEL_RES_Y must equal MATRIX_HEIGHT - only horizontal panel chaining is supported");
+    constexpr int kPanelChainLength = MATRIX_WIDTH / HUB75_PANEL_RES_X;
+
+    HUB75_I2S_CFG config(HUB75_PANEL_RES_X, HUB75_PANEL_RES_Y, kPanelChainLength, pins);
     config.double_buff = true;
     config.i2sspeed = HUB75_I2S_CFG::HZ_20M;
     config.min_refresh_rate = MATRIX_REFRESH_RATE;

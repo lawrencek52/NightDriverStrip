@@ -84,7 +84,24 @@
     #define CLK_PIN GPIO_NUM_2
     */
 
-    #if defined(MESMERIZER_DEVKIT_S3) && MESMERIZER_DEVKIT_S3
+    #if defined(WAVESHARE_ESP32S3_RGB_MATRIX) && WAVESHARE_ESP32S3_RGB_MATRIX
+        // Waveshare ESP32-S3-RGB-Matrix driver board's documented default pinout
+        // (github.com/waveshareteam/ESP32-S3-RGB-Matrix example sketches).
+        #define R1_PIN  GPIO_NUM_4
+        #define G1_PIN  GPIO_NUM_5
+        #define B1_PIN  GPIO_NUM_6
+        #define R2_PIN  GPIO_NUM_7
+        #define G2_PIN  GPIO_NUM_15
+        #define B2_PIN  GPIO_NUM_16
+        #define A_PIN   GPIO_NUM_18
+        #define B_PIN   GPIO_NUM_8
+        #define C_PIN   GPIO_NUM_3
+        #define D_PIN   GPIO_NUM_42
+        #define E_PIN   GPIO_NUM_9
+        #define LAT_PIN GPIO_NUM_40
+        #define OE_PIN  GPIO_NUM_2
+        #define CLK_PIN GPIO_NUM_41
+    #elif defined(MESMERIZER_DEVKIT_S3) && MESMERIZER_DEVKIT_S3
         // ESP32-S3-DevKitC-1 HUB75 wiring.
         #define R1_PIN  GPIO_NUM_18
         #define G1_PIN  GPIO_NUM_8

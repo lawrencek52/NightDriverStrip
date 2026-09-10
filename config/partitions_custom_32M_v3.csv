@@ -1,0 +1,13 @@
+# ESP-IDF Partition Table for 32 MB flash with OTA and core dumps.
+# storage is sized to match the existing 16 MB table (8 MB), not the full
+# remaining ~23 MB - NightDriverStrip's actual SPIFFS usage is a few KB of
+# JSON, and a much larger SPIFFS partition was observed to fail to mount/
+# format on first boot (SPIFFS.begin(true) returning error 258).
+# Name,   Type, SubType, Offset,   Size,     Flags
+
+nvs,      data, nvs,     0x009000, 0x003000,
+otadata,  data, ota,     0x00c000, 0x002000,
+app0,     app,  ota_0,   0x010000, 0x400000,
+app1,     app,  ota_1,   0x410000, 0x400000,
+coredump, data, coredump,0x810000, 0x010000,
+storage,  data, spiffs,  0x820000, 0x7E0000,

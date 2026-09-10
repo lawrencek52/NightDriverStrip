@@ -410,6 +410,10 @@ void SoundAnalyzerBase::InitAudioInput()
 #if USE_M5
     InitM5();
 #else
+    // Bring up the I2C-controlled codec chips (mic array + speaker), if any,
+    // before the digital-mic init below claims the I2S pins they share.
+    InitAudioCodec();
+
     // Digital Microphones
     InitI2S_Modern();
     InitI2S_Legacy();

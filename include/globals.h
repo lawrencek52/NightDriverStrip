@@ -285,6 +285,20 @@ extern std::recursive_mutex g_effect_manager_mutex;
 #ifndef MATRIX_HEIGHT
     #define MATRIX_HEIGHT           1
 #endif
+
+// HUB75 only: resolution of a single physical panel module, when MATRIX_WIDTH/HEIGHT
+// describe a canvas made of several panels chained left-to-right (e.g. two 32x32
+// panels chained into a 64x32 canvas). Defaults to the full canvas, i.e. one panel /
+// no chaining - the overwhelmingly common case, and every existing project's setting.
+// See StartMatrix() in hub75gfx.cpp for how this and MATRIX_WIDTH combine into a
+// chain length.
+#ifndef HUB75_PANEL_RES_X
+    #define HUB75_PANEL_RES_X       MATRIX_WIDTH
+#endif
+#ifndef HUB75_PANEL_RES_Y
+    #define HUB75_PANEL_RES_Y       MATRIX_HEIGHT
+#endif
+
 #ifndef NUM_LEDS
     #define NUM_LEDS                (MATRIX_WIDTH*MATRIX_HEIGHT)
 #endif
@@ -849,6 +863,36 @@ extern const int g_aRingSizeTable[];
   #ifndef I2S_DATA_PIN
     #define I2S_DATA_PIN     AUDIO_INPUT_PIN
   #endif
+#endif
+
+// I2S master clock output pin. Only needed by boards whose mic is behind an
+// external codec chip (see USE_AUDIO_CODEC below) that requires a real MCLK
+// to derive its own internal clocks - a plain self-clocking digital mic
+// leaves this unused, hence the default.
+#ifndef I2S_MCLK_PIN
+    #define I2S_MCLK_PIN (-1) // I2S_GPIO_UNUSED
+#endif
+
+// Set when the board's mic/speaker sit behind I2C-controlled codec chips
+// (e.g. ES7210 + ES8311 on the Waveshare ESP32-S3-RGB-Matrix) rather than a
+// simple self-clocking digital mic - see SoundAnalyzerBase::InitAudioCodec().
+#ifndef USE_AUDIO_CODEC
+    #define USE_AUDIO_CODEC 0
+#endif
+
+#if USE_AUDIO_CODEC
+    #ifndef AUDIO_CODEC_I2C_SDA_PIN
+        #define AUDIO_CODEC_I2C_SDA_PIN 47
+    #endif
+    #ifndef AUDIO_CODEC_I2C_SCL_PIN
+        #define AUDIO_CODEC_I2C_SCL_PIN 48
+    #endif
+    #ifndef AUDIO_CODEC_SPEAKER_DATA_PIN
+        #define AUDIO_CODEC_SPEAKER_DATA_PIN 21
+    #endif
+    #ifndef AUDIO_CODEC_PA_ENABLE_PIN
+        #define AUDIO_CODEC_PA_ENABLE_PIN 11
+    #endif
 #endif
 
 // PDM microphones (XIAO ESP32-S3 Sense, etc.) need only a clock out and a data

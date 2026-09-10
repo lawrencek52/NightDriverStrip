@@ -703,6 +703,7 @@ class SoundAnalyzerBase : public ISoundAnalyzer
     static void ComputeLogMelBandEdges(std::array<int, N>& binStart, std::array<int, N>& binEnd);
 
     void InitM5();
+    void InitAudioCodec(); // I2C codec bring-up (ES7210 mic array + ES8311 speaker); no-op unless USE_AUDIO_CODEC
     void InitI2S_Modern();
     void InitI2S_Legacy();
     void InitPDM_Modern();

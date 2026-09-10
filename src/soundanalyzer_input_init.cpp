@@ -24,6 +24,10 @@
     #include <M5Unified.h>
 #endif
 
+#if USE_AUDIO_CODEC
+    #include <Wire.h>
+#endif
+
 namespace
 {
     int GetConfiguredAudioInputPin()
@@ -33,6 +37,234 @@ namespace
 
         return AUDIO_INPUT_PIN;
     }
+
+#if USE_AUDIO_CODEC
+    // ES7210 (4-channel mic ADC, only MIC1/MIC2 populated on this board - the
+    // two onboard mics) and ES8311 (mono speaker codec) I2C register drivers.
+    // Both chips need a real init sequence before they'll produce/accept valid
+    // I2S audio, unlike the self-clocking digital mics USE_I2S_AUDIO otherwise
+    // assumes. Sequences ported from Waveshare's own ES8311 Arduino example and
+    // Espressif's esp-bsp ES7210 driver (both Apache-2.0 - compatible with this
+    // file's GPLv3), trimmed to just what this board needs: fixed sample rates,
+    // no runtime ALC/EQ. Local to this file - nothing outside audio input init
+    // needs these chips.
+
+    // Dual-mic array ADC. Fixed at 24 kHz/16-bit standard I2S over a 12.288 MHz
+    // MCLK (512x ratio) - matches SoundAnalyzerBase::SAMPLING_FREQUENCY and the
+    // MCLK InitI2S_Modern() configures below.
+    class ES7210Codec
+    {
+    public:
+        bool begin()
+        {
+            Wire.beginTransmission(kI2cAddr);
+            if (Wire.endTransmission() != 0)
+                return false;
+
+            bool ok = true;
+            // Software reset.
+            ok &= WriteReg(0x00, 0xFF);
+            ok &= WriteReg(0x00, 0x32);
+            // Chip initial/power-up state timing.
+            ok &= WriteReg(0x09, 0x30);
+            ok &= WriteReg(0x0A, 0x30);
+            // High-pass filter for ADC1-4.
+            ok &= WriteReg(0x23, 0x2A);
+            ok &= WriteReg(0x22, 0x0A);
+            ok &= WriteReg(0x21, 0x2A);
+            ok &= WriteReg(0x20, 0x0A);
+            // 16-bit standard I2S, TDM off.
+            ok &= WriteReg(0x11, 0x60);
+            ok &= WriteReg(0x12, 0x00);
+            // Analog power / VMID.
+            ok &= WriteReg(0x40, 0xC3);
+            // MIC1-4 bias 2.55V.
+            ok &= WriteReg(0x41, 0x40);
+            ok &= WriteReg(0x42, 0x40);
+            // MIC1-4 gain 30dB.
+            ok &= WriteReg(0x43, 0x1A);
+            ok &= WriteReg(0x44, 0x1A);
+            ok &= WriteReg(0x45, 0x1A);
+            ok &= WriteReg(0x46, 0x1A);
+            // Power on MIC1-4.
+            ok &= WriteReg(0x47, 0x08);
+            ok &= WriteReg(0x48, 0x08);
+            ok &= WriteReg(0x49, 0x08);
+            ok &= WriteReg(0x4A, 0x08);
+            // 24kHz/512x MCLK coefficients (osr, adc_div|doubler|dll, lrck_h/l).
+            ok &= WriteReg(0x07, 0x20);
+            ok &= WriteReg(0x02, 0x81);
+            ok &= WriteReg(0x04, 0x02);
+            ok &= WriteReg(0x05, 0x00);
+            // Power down DLL.
+            ok &= WriteReg(0x06, 0x04);
+            // Power on MIC bias & ADC & PGA for MIC1-4.
+            ok &= WriteReg(0x4B, 0x0F);
+            ok &= WriteReg(0x4C, 0x0F);
+            // Enable device.
+            ok &= WriteReg(0x00, 0x71);
+            ok &= WriteReg(0x00, 0x41);
+
+            return ok;
+        }
+
+    private:
+        bool WriteReg(uint8_t reg, uint8_t val)
+        {
+            Wire.beginTransmission(kI2cAddr);
+            Wire.write(reg);
+            Wire.write(val);
+            return Wire.endTransmission() == 0;
+        }
+
+        static constexpr uint8_t kI2cAddr = 0x40; // AD0/AD1 tied to GND
+    };
+
+    // Mono speaker codec (DAC + line driver feeding the onboard amp via
+    // NS4150B). Fixed at 48 kHz/16-bit over the same 12.288 MHz MCLK - used
+    // only for the boot self-test tone below, never concurrently with the mic:
+    // the two chips share one physical LRCK/BCLK/MCLK bus, so only one sample
+    // rate can be live on it at a time.
+    class ES8311Codec
+    {
+    public:
+        bool begin()
+        {
+            Wire.beginTransmission(kI2cAddr);
+            if (Wire.endTransmission() != 0)
+                return false;
+
+            bool ok = true;
+            ok &= WriteReg(0x00, 0x1F);
+            delay(20);
+            ok &= WriteReg(0x00, 0x00);
+            ok &= WriteReg(0x00, 0x80);
+            ok &= WriteReg(0x01, 0x3F);
+
+            uint8_t reg = ReadReg(0x06);
+            reg &= ~(1U << 5);
+            ok &= WriteReg(0x06, reg);
+
+            // 48kHz/256x MCLK coefficients (pre_div=1, pre_multi=0, adc_div=1,
+            // dac_div=1, fs_mode=0, lrck=0x00FF, bclk_div=4, osr=0x10). reg02
+            // needs no change here - pre_div=1/pre_multi=0 both contribute 0.
+            ok &= WriteReg(0x03, 0x10);
+            ok &= WriteReg(0x04, 0x10);
+            ok &= WriteReg(0x05, 0x00);
+
+            reg = ReadReg(0x06);
+            reg &= 0xE0;
+            reg |= 0x03;
+            ok &= WriteReg(0x06, reg);
+
+            reg = ReadReg(0x07);
+            reg &= 0xC0;
+            ok &= WriteReg(0x07, reg);
+            ok &= WriteReg(0x08, 0xFF);
+
+            // 16 bits per sample, both ADC and DAC word length fields.
+            uint8_t reg09 = ReadReg(0x09) | (3 << 2);
+            uint8_t reg0A = ReadReg(0x0A) | (3 << 2);
+            ok &= WriteReg(0x09, reg09);
+            ok &= WriteReg(0x0A, reg0A);
+
+            ok &= WriteReg(0x0D, 0x01);
+            ok &= WriteReg(0x0E, 0x02);
+            ok &= WriteReg(0x12, 0x00);
+            ok &= WriteReg(0x13, 0x10);
+            ok &= WriteReg(0x1C, 0x6A);
+            ok &= WriteReg(0x37, 0x08);
+
+            ok &= setVolume(70);
+            return ok;
+        }
+
+        bool setVolume(uint8_t volumePercent)
+        {
+            volumePercent = std::min<uint8_t>(volumePercent, 100);
+            const int reg32 = volumePercent == 0 ? 0 : ((volumePercent * 256) / 100) - 1;
+            return WriteReg(0x32, static_cast<uint8_t>(reg32));
+        }
+
+    private:
+        bool WriteReg(uint8_t reg, uint8_t val)
+        {
+            Wire.beginTransmission(kI2cAddr);
+            Wire.write(reg);
+            Wire.write(val);
+            return Wire.endTransmission() == 0;
+        }
+
+        uint8_t ReadReg(uint8_t reg)
+        {
+            Wire.beginTransmission(kI2cAddr);
+            Wire.write(reg);
+            Wire.endTransmission(false);
+            Wire.requestFrom(static_cast<uint16_t>(kI2cAddr), static_cast<uint8_t>(1), true);
+            return Wire.available() ? Wire.read() : 0;
+        }
+
+        static constexpr uint8_t kI2cAddr = 0x18;
+    };
+
+    // Plays a brief tone through the speaker to confirm the codec, amp-enable
+    // GPIO, and wiring all work, using a transient I2S TX channel that's torn
+    // down immediately after - InitI2S_Modern() then claims the persistent RX
+    // channel for ongoing mic capture. Best-effort: logs and returns on any
+    // failure rather than blocking audio bring-up over a speaker fault.
+    void PlaySpeakerSelfTestTone()
+    {
+        constexpr uint32_t kSampleRate = 48000;
+        constexpr uint32_t kToneHz = 440;
+        constexpr uint32_t kDurationMs = 300;
+        constexpr size_t kCycleSamples = kSampleRate / kToneHz;
+
+        i2s_chan_handle_t txHandle = nullptr;
+        i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+        if (i2s_new_channel(&chanCfg, &txHandle, nullptr) != ESP_OK)
+        {
+            debugW("Audio: speaker self-test skipped, could not allocate I2S TX channel");
+            return;
+        }
+
+        i2s_std_config_t stdCfg = {
+            .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kSampleRate),
+            .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+            .gpio_cfg = {
+                .mclk = static_cast<gpio_num_t>(I2S_MCLK_PIN),
+                .bclk = static_cast<gpio_num_t>(I2S_BCLK_PIN),
+                .ws = static_cast<gpio_num_t>(I2S_WS_PIN),
+                .dout = static_cast<gpio_num_t>(AUDIO_CODEC_SPEAKER_DATA_PIN),
+                .din = I2S_GPIO_UNUSED,
+            },
+        };
+
+        if (i2s_channel_init_std_mode(txHandle, &stdCfg) != ESP_OK || i2s_channel_enable(txHandle) != ESP_OK)
+        {
+            debugW("Audio: speaker self-test skipped, could not start I2S TX channel");
+            i2s_del_channel(txHandle);
+            return;
+        }
+
+        int16_t cycle[kCycleSamples * 2];
+        for (size_t i = 0; i < kCycleSamples; ++i)
+        {
+            const auto sample = static_cast<int16_t>(8000.0f * sinf(2.0f * static_cast<float>(M_PI) * i / kCycleSamples));
+            cycle[2 * i]     = sample;
+            cycle[2 * i + 1] = sample;
+        }
+
+        const uint32_t cyclesNeeded = (kSampleRate * kDurationMs / 1000) / kCycleSamples;
+        for (uint32_t c = 0; c < cyclesNeeded; ++c)
+        {
+            size_t bytesWritten = 0;
+            i2s_channel_write(txHandle, cycle, sizeof(cycle), &bytesWritten, pdMS_TO_TICKS(100));
+        }
+
+        i2s_channel_disable(txHandle);
+        i2s_del_channel(txHandle);
+    }
+#endif // USE_AUDIO_CODEC
 }
 
 void SoundAnalyzerBase::InitM5()
@@ -51,6 +283,35 @@ void SoundAnalyzerBase::InitM5()
 #endif
 }
 
+void SoundAnalyzerBase::InitAudioCodec()
+{
+#if USE_AUDIO_CODEC && IS_IDF5
+    debugI("Audio: Initializing codec I2C bus on SDA:%d SCL:%d", AUDIO_CODEC_I2C_SDA_PIN, AUDIO_CODEC_I2C_SCL_PIN);
+    Wire.begin(AUDIO_CODEC_I2C_SDA_PIN, AUDIO_CODEC_I2C_SCL_PIN);
+
+    ES7210Codec mic;
+    if (!mic.begin())
+        debugW("Audio: ES7210 mic-array init failed - check I2C wiring/address");
+    else
+        debugI("Audio: ES7210 mic-array initialized");
+
+    pinMode(AUDIO_CODEC_PA_ENABLE_PIN, OUTPUT);
+    digitalWrite(AUDIO_CODEC_PA_ENABLE_PIN, LOW); // keep the amp muted until the codec is confirmed up
+
+    ES8311Codec speaker;
+    if (!speaker.begin())
+    {
+        debugW("Audio: ES8311 speaker codec init failed - check I2C wiring/address");
+    }
+    else
+    {
+        debugI("Audio: ES8311 speaker codec initialized, playing self-test tone");
+        digitalWrite(AUDIO_CODEC_PA_ENABLE_PIN, HIGH);
+        PlaySpeakerSelfTestTone();
+    }
+#endif
+}
+
 void SoundAnalyzerBase::InitI2S_Modern()
 {
 #if (USE_I2S_AUDIO || ELECROW) && IS_IDF5
@@ -64,13 +325,18 @@ void SoundAnalyzerBase::InitI2S_Modern()
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLING_FREQUENCY),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = I2S_BCLK_PIN,
-            .ws = I2S_WS_PIN,
+            .mclk = static_cast<gpio_num_t>(I2S_MCLK_PIN),
+            .bclk = static_cast<gpio_num_t>(I2S_BCLK_PIN),
+            .ws = static_cast<gpio_num_t>(I2S_WS_PIN),
             .dout = I2S_GPIO_UNUSED,
             .din = static_cast<gpio_num_t>(audioInputPin),
         },
     };
+#if USE_AUDIO_CODEC
+    // ES7210 is only reachable at 24kHz with a 512x MCLK ratio (12.288MHz) -
+    // see the coefficient comment in ES7210Codec::begin() above.
+    std_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_512;
+#endif
 
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(_rx_handle, &std_cfg));
     ESP_ERROR_CHECK(i2s_channel_enable(_rx_handle));
