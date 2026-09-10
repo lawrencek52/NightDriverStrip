@@ -128,8 +128,16 @@ class PatternSubscribers : public EffectWithId<PatternSubscribers>
 
         if (httpResponseCode <= 0)
         {
+            // DNS/connect failures (e.g. tools.tastethecode.com not resolving) land here with
+            // a negative code. http.end() releases the (never-established) connection, so
+            // falling through to http.getString() below - as this used to do - reads from an
+            // already-ended HTTPClient, which crashed the NetworkReader task (the same task
+            // that owns WiFi reconnect and the web server lifecycle, hence the DNS failure
+            // showing up as "the web server crashed" while rendering/audio kept running fine
+            // on their own tasks).
             debugW("Error fetching subscribers for channel %s (GUID %s)", youtubeChannelName.c_str(), youtubeChannelGuid.c_str());
             http.end();
+            return;
         }
 
         String response = http.getString();
