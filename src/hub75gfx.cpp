@@ -175,7 +175,20 @@ void HUB75GFX::StartMatrix()
     constexpr int kPanelChainLength = MATRIX_WIDTH / HUB75_PANEL_RES_X;
 
     HUB75_I2S_CFG config(HUB75_PANEL_RES_X, HUB75_PANEL_RES_Y, kPanelChainLength, pins);
-    config.double_buff = true;
+    // The library's own DMA framebuffer is forced into internal SRAM (not
+    // PSRAM - see ESP32-HUB75-MatrixPanel-I2S-DMA's rowBitStruct allocator),
+    // and double_buff doubles it. At this board's 128x64 (4x the pixels of
+    // the 64x32 config double_buff was tuned for), leaving it on starves the
+    // onboard mic's I2S DMA init of internal RAM (ESP_ERR_NO_MEM abort in
+    // SoundAnalyzerBase::InitI2S_Modern, confirmed on real hardware). Other
+    // HUB75 targets (Mesmerizer and friends) have smaller matrices with
+    // headroom to spare, so this is scoped to just this board rather than
+    // disabled for everyone.
+    #if defined(WAVESHARE_ESP32S3_RGB_MATRIX) && WAVESHARE_ESP32S3_RGB_MATRIX
+        config.double_buff = false;
+    #else
+        config.double_buff = true;
+    #endif
     config.i2sspeed = HUB75_I2S_CFG::HZ_20M;
     config.min_refresh_rate = MATRIX_REFRESH_RATE;
 
