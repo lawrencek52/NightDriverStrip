@@ -186,6 +186,20 @@ void HUB75GFX::StartMatrix()
     // disabled for everyone.
     #if defined(WAVESHARE_ESP32S3_RGB_MATRIX) && WAVESHARE_ESP32S3_RGB_MATRIX
         config.double_buff = false;
+        // DMA descriptor count scales with pixel_color_depth_bits (each extra
+        // bit needs more BCM passes per refresh - see setupDMA()'s
+        // dma_descriptors_per_row calculation). The library's default of 8
+        // bits, combined with min_refresh_rate forcing lsbMsbTransitionBit up
+        // to hit 180Hz on this 4x-larger-than-typical matrix, left this board
+        // with as little as 800 bytes of free DMA-capable RAM after boot -
+        // confirmed on real hardware to wedge the WiFi/network stack (device
+        // kept rendering, but became completely unreachable) after ~5 seconds
+        // of sustained frame traffic from LED-Central. Dropping to 6 bits
+        // (64 levels/channel instead of 256) cuts descriptor count enough to
+        // give the rest of the system real headroom again; still smooth
+        // enough for typical effects. Revisit if a real product needs more
+        // color depth than RAM allows at this size.
+        config.setPixelColorDepthBits(6);
     #else
         config.double_buff = true;
     #endif
