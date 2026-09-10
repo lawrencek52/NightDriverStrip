@@ -135,6 +135,11 @@ class PatternLife : public EffectWithId<PatternLife>
 private:
     allocated_unique_ptr<Cell [][MATRIX_HEIGHT]> world;
     allocated_unique_ptr<uint32_t []> checksums;
+    // CRC scratch buffer for the current generation's alive bits (see Draw()) - PSRAM-backed
+    // like world/checksums above, not a stack-local MATRIX_WIDTH*MATRIX_HEIGHT array, which on
+    // a large matrix (e.g. 128x64 = 8192 bytes) can exceed the whole render task's stack budget
+    // (DRAWING_STACK_SIZE, 4096 bytes) by itself and overflow it.
+    allocated_unique_ptr<bool [][MATRIX_HEIGHT]> alive;
     int iChecksum = 0;
     uint32_t bStuckInLoop = 0;
     unsigned int density = 50;
@@ -151,6 +156,7 @@ private:
 
         world = make_unique_psram<Cell[][MATRIX_HEIGHT]>(MATRIX_WIDTH);
         checksums = make_unique_psram<uint32_t[]>(CRC_LENGTH);
+        alive = make_unique_psram<bool[][MATRIX_HEIGHT]>(MATRIX_WIDTH);
 
         return true;
     }
@@ -270,12 +276,11 @@ public:
         // We have to first extract the alive bits alone because we don't want the hue and brightness
         // data to mess with the CRC.
 
-        bool alive[MATRIX_WIDTH][MATRIX_HEIGHT];
         for (int i = 0; i < MATRIX_WIDTH; i++)
             for (int j = 0; j < MATRIX_HEIGHT; j++)
                 alive[i][j] = world[i][j].alive;
 
-        auto crc = uzlib_crc32(alive, sizeof(alive), 0xffffffff);
+        auto crc = uzlib_crc32(alive.get(), MATRIX_WIDTH * MATRIX_HEIGHT * sizeof(bool), 0xffffffff);
         for (int i = 0; i < CRC_LENGTH - 1; i++)
             checksums[i] = checksums[i+1];
         checksums[CRC_LENGTH - 1] = crc;

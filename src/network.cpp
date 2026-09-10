@@ -242,11 +242,18 @@ namespace nd_network
                 {
                     l_HasStaIp.store(true);
                     DisableWiFiPowerSave("GOT_IP");
-                    debugI("WiFi GOT_IP: ip=%s gateway=%s subnet=%s dns=%s",
+                    const String &hostname = g_ptrSystem ? g_ptrSystem->GetDeviceConfig().GetHostname() : String();
+                    debugI("WiFi GOT_IP: hostname=%s.local ip=%s gateway=%s subnet=%s dns=%s",
+                           hostname.c_str(),
                            WiFi.localIP().toString().c_str(),
                            WiFi.gatewayIP().toString().c_str(),
                            WiFi.subnetMask().toString().c_str(),
                            WiFi.dnsIP().toString().c_str());
+                    // Printed directly (not just through the debugI level/tag machinery) so
+                    // it's unmissable on the serial console when telling multiple boards apart -
+                    // this is the one line that answers "which physical device is this, and
+                    // where is it on the network."
+                    Serial.printf("Network: %s.local is at %s\n", hostname.c_str(), WiFi.localIP().toString().c_str());
                 }
                 else if (event == ARDUINO_EVENT_WIFI_STA_LOST_IP)
                 {
