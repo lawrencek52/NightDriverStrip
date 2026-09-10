@@ -533,7 +533,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Description       = "Runtime-selected driver. If this differs from the firmware's compiled driver, the API reports recompile required.",
             .Type              = SettingSpec::SettingType::String,
             .Section           = kSectionOutput,
-            .Priority          = 10,
+            .Priority          = 0,
             .ApiPath           = "outputs.driver",
             .Widget            = SettingSpec::WidgetKind::Select,
             .Options           = SettingSpec::OptionsSource::SchemaPath,
@@ -549,7 +549,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .MinimumValue      = 1.0,
             .MaximumValue      = (double)GetCompiledChannelCount(),
             .Section           = kSectionOutput,
-            .Priority          = 11,
+            .Priority          = 1,
             .ApiPath           =
             #if USE_APA102
                 "outputs.apa102.channelCount",
@@ -571,7 +571,7 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .Description       = "Byte order used when streaming RGB values to the strip. This applies live on strip builds and is ignored on HUB75 builds.",
             .Type              = SettingSpec::SettingType::String,
             .Section           = kSectionOutput,
-            .Priority          = 12,
+            .Priority          = 2,
             .ApiPath           =
             #if USE_APA102
                 "outputs.apa102.colorOrder",
@@ -588,77 +588,84 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             #endif
         }));
 
-        // pinSpecStrings backs the const char* pointers stored in each SettingSpec below.
-        // Both the per-channel pin loop and the per-channel strip-length loop below push
-        // strings onto this vector and hold onto c_str() pointers from those strings. If the
-        // vector reallocates between those emplace_back calls the earlier c_str() pointers
-        // dangle and the spec JSON ends up serializing whatever the freed memory contains
-        // (in practice, control characters that JSON.parse then rejects). Budget room for
-        // both loops upfront so reallocation never happens mid-iteration.
-        constexpr size_t kPinStringsPerChannel =
-        #if USE_APA102
-            12; // 8 for data+clock pin spec, 4 for strip-length spec
-        #else
-            8;  // 4 for pin spec, 4 for strip-length spec
-        #endif
-        pinSpecStrings.reserve(compiledChannelCount * kPinStringsPerChannel);
-        const auto stableCStr = [](const String& s) { return s.c_str(); };
-
-        for (size_t i = 0; i < compiledChannelCount; ++i)
+        // WS281x/APA102 pin settings are meaningless on HUB75 builds - the matrix uses a
+        // fixed set of parallel data lines, not per-channel GPIO pins - so skip generating
+        // them entirely rather than relying on the UI to hide them. Matches how the topology
+        // section above skips itself on HUB75 builds.
+        if (!IsHub75Build())
         {
-            const auto& nameStr        = pinSpecStrings.emplace_back(str_sprintf("stripDataPin%zu", i));
-            const auto& friendlyStr    = pinSpecStrings.emplace_back(
-                #if USE_APA102
-                    str_sprintf("APA102 data pin %zu", i + 1)
-                #else
-                    str_sprintf("WS281x pin %zu", i + 1)
-                #endif
-            );
-            const auto& descriptionStr = pinSpecStrings.emplace_back(
-                #if USE_APA102
-                    str_sprintf("GPIO assigned to APA102 data for channel %zu.", i + 1)
-                #else
-                    str_sprintf("GPIO assigned to WS281x channel %zu.", i + 1)
-                #endif
-            );
-            const auto& apiPathStr     = pinSpecStrings.emplace_back(
-                #if USE_APA102
-                    str_sprintf("outputs.apa102.dataPins[%zu]", i)
-                #else
-                    str_sprintf("outputs.ws281x.pins[%zu]", i)
-                #endif
-            );
-
-            settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-                .Name         = stableCStr(nameStr),
-                .FriendlyName = stableCStr(friendlyStr),
-                .Description  = stableCStr(descriptionStr),
-                .Type         = SettingSpec::SettingType::Integer,
-                .MinimumValue = -1.0,
-                .MaximumValue = 48.0,
-                .Section      = kSectionOutput,
-                .Priority     = 3 + static_cast<int>(i),
-                .ApiPath      = stableCStr(apiPathStr)
-            }));
-
+            // pinSpecStrings backs the const char* pointers stored in each SettingSpec below.
+            // Both the per-channel pin loop and the per-channel strip-length loop below push
+            // strings onto this vector and hold onto c_str() pointers from those strings. If the
+            // vector reallocates between those emplace_back calls the earlier c_str() pointers
+            // dangle and the spec JSON ends up serializing whatever the freed memory contains
+            // (in practice, control characters that JSON.parse then rejects). Budget room for
+            // both loops upfront so reallocation never happens mid-iteration.
+            constexpr size_t kPinStringsPerChannel =
             #if USE_APA102
-            const auto& clockNameStr        = pinSpecStrings.emplace_back(str_sprintf("apa102ClockPin%zu", i));
-            const auto& clockFriendlyStr    = pinSpecStrings.emplace_back(str_sprintf("APA102 clock pin %zu", i + 1));
-            const auto& clockDescriptionStr = pinSpecStrings.emplace_back(str_sprintf("GPIO assigned to APA102 clock for channel %zu.", i + 1));
-            const auto& clockApiPathStr     = pinSpecStrings.emplace_back(str_sprintf("outputs.apa102.clockPins[%zu]", i));
-
-            settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
-                .Name         = stableCStr(clockNameStr),
-                .FriendlyName = stableCStr(clockFriendlyStr),
-                .Description  = stableCStr(clockDescriptionStr),
-                .Type         = SettingSpec::SettingType::Integer,
-                .MinimumValue = -1.0,
-                .MaximumValue = 48.0,
-                .Section      = kSectionOutput,
-                .Priority     = 3 + static_cast<int>(compiledChannelCount) + static_cast<int>(i),
-                .ApiPath      = stableCStr(clockApiPathStr)
-            }));
+                12; // 8 for data+clock pin spec, 4 for strip-length spec
+            #else
+                8;  // 4 for pin spec, 4 for strip-length spec
             #endif
+            pinSpecStrings.reserve(compiledChannelCount * kPinStringsPerChannel);
+            const auto stableCStr = [](const String& s) { return s.c_str(); };
+
+            for (size_t i = 0; i < compiledChannelCount; ++i)
+            {
+                const auto& nameStr        = pinSpecStrings.emplace_back(str_sprintf("stripDataPin%zu", i));
+                const auto& friendlyStr    = pinSpecStrings.emplace_back(
+                    #if USE_APA102
+                        str_sprintf("APA102 data pin %zu", i + 1)
+                    #else
+                        str_sprintf("WS281x pin %zu", i + 1)
+                    #endif
+                );
+                const auto& descriptionStr = pinSpecStrings.emplace_back(
+                    #if USE_APA102
+                        str_sprintf("GPIO assigned to APA102 data for channel %zu.", i + 1)
+                    #else
+                        str_sprintf("GPIO assigned to WS281x channel %zu.", i + 1)
+                    #endif
+                );
+                const auto& apiPathStr     = pinSpecStrings.emplace_back(
+                    #if USE_APA102
+                        str_sprintf("outputs.apa102.dataPins[%zu]", i)
+                    #else
+                        str_sprintf("outputs.ws281x.pins[%zu]", i)
+                    #endif
+                );
+
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = stableCStr(nameStr),
+                    .FriendlyName = stableCStr(friendlyStr),
+                    .Description  = stableCStr(descriptionStr),
+                    .Type         = SettingSpec::SettingType::Integer,
+                    .MinimumValue = -1.0,
+                    .MaximumValue = 48.0,
+                    .Section      = kSectionOutput,
+                    .Priority     = 3 + static_cast<int>(i),
+                    .ApiPath      = stableCStr(apiPathStr)
+                }));
+
+                #if USE_APA102
+                const auto& clockNameStr        = pinSpecStrings.emplace_back(str_sprintf("apa102ClockPin%zu", i));
+                const auto& clockFriendlyStr    = pinSpecStrings.emplace_back(str_sprintf("APA102 clock pin %zu", i + 1));
+                const auto& clockDescriptionStr = pinSpecStrings.emplace_back(str_sprintf("GPIO assigned to APA102 clock for channel %zu.", i + 1));
+                const auto& clockApiPathStr     = pinSpecStrings.emplace_back(str_sprintf("outputs.apa102.clockPins[%zu]", i));
+
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = stableCStr(clockNameStr),
+                    .FriendlyName = stableCStr(clockFriendlyStr),
+                    .Description  = stableCStr(clockDescriptionStr),
+                    .Type         = SettingSpec::SettingType::Integer,
+                    .MinimumValue = -1.0,
+                    .MaximumValue = 48.0,
+                    .Section      = kSectionOutput,
+                    .Priority     = 3 + static_cast<int>(compiledChannelCount) + static_cast<int>(i),
+                    .ApiPath      = stableCStr(clockApiPathStr)
+                }));
+                #endif
+            }
         }
 
         settingSpecReferences.insert(settingSpecReferences.end(), settingSpecs.begin(), settingSpecs.end());
