@@ -341,6 +341,15 @@ void setup()
     // Initialize Serial output
     Serial.begin(115200);
 
+#if defined(WAVESHARE_ESP32S3_RGB_MATRIX) && WAVESHARE_ESP32S3_RGB_MATRIX
+    // This board's native USB CDC connection drops entirely on any MCU
+    // reset, not just the serial stream - the host takes a second or two to
+    // re-enumerate the device afterward. Anything logged before that
+    // finishes is lost, so a terminal that reconnects right after a reset
+    // misses all of early boot. Give the host time to catch up first.
+    delay(4000);
+#endif
+
     // Route all ESP-IDF log output through ConsoleManager so CRLF translation
     // and Serial.flush() are applied on every log line.
     Logger::InstallLogHook();
@@ -843,6 +852,17 @@ void loop()
 
             #if USE_HUB75
                 strOutput += str_sprintf("Refresh: %d Hz, Power: %d mW, Brite: %3.0lf%%, ", HUB75GFX::GetRefreshRate(), g_Values.MatrixPowerMilliwatts, g_Values.MatrixScaledBrightness / 2.55);
+
+                // TEMPORARY: 32fps-ceiling investigation on the Waveshare
+                // 128x64 board - see HUB75GFX::GetAndResetSwapStats() and
+                // SocketServer::GetAndResetDecompressStats() for why these
+                // are read here instead of logged from their own tasks.
+                auto swapStats = HUB75GFX::GetAndResetSwapStats();
+                strOutput += str_sprintf("Swaps/5s: %u waitAvgUs: %u flushAvgUs: %u flipAvgUs: %u, ",
+                    (unsigned)swapStats.swaps, (unsigned)swapStats.waitAvgUs, (unsigned)swapStats.flushAvgUs, (unsigned)swapStats.flipAvgUs);
+                auto decompressStats = SocketServer::GetAndResetDecompressStats();
+                strOutput += str_sprintf("Decompressed/5s: %u avgUs: %u, ",
+                    (unsigned)decompressStats.packets, (unsigned)decompressStats.avgUs);
             #endif
 
             #if ENABLE_AUDIO

@@ -182,6 +182,11 @@ private:
     struct sockaddr_in          _address;
     std::array<ClientConnection, MAX_CLIENTS> _clients;
     allocated_unique_ptr<uint8_t []> _abOutputBuffer;          // Shared decompression scratch
+    #if USE_PSRAM
+        // Internal-RAM copy of a compressed packet's bytes, reused across every
+        // call instead of allocated/freed per packet - see ProcessCompletePacket().
+        allocated_unique_ptr<uint8_t []> _abCompressedScratch;
+    #endif
 
 public:
 
@@ -251,6 +256,13 @@ public:
     // Use unzlib to decompress a memory buffer
 
     static bool DecompressBuffer(const uint8_t * pBuffer, size_t cBuffer, uint8_t * pOutput, size_t expectedOutputSize);
+
+    // TEMPORARY: see HUB75GFX::GetAndResetSwapStats() for why this is
+    // accumulated here rather than logged directly from ProcessCompletePacket
+    // (which runs on the socket task) - read+reset from main.cpp's periodic
+    // status print instead. Remove once the 32fps ceiling investigation is done.
+    struct DecompressStats { uint32_t packets, avgUs; };
+    static DecompressStats GetAndResetDecompressStats();
 };
 
 #endif

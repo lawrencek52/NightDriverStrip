@@ -81,6 +81,9 @@ SocketServer::SocketServer(int port, int numLeds) :
     _numLeds(numLeds)
 {
     _abOutputBuffer = make_unique_psram<uint8_t[]>(MAXIMUM_PACKET_SIZE + 1);                    // +1 for uzlib one byte overreach bug
+    #if USE_PSRAM
+        _abCompressedScratch = make_unique_internal<uint8_t[]>(MAXIMUM_PACKET_SIZE + 1);        // +1 to match, see ProcessCompletePacket()
+    #endif
     memset(&_address, 0, sizeof(_address));
 }
 
@@ -209,6 +212,19 @@ bool SocketServer::begin()
     _server_fd.store(fd);
     debugI("Socket server %d listening on port %d", fd, _port);
     return true;
+}
+
+namespace
+{
+    // TEMPORARY: see SocketServer::GetAndResetDecompressStats().
+    uint32_t s_decompressUsTotal = 0, s_decompressCount = 0;
+}
+
+SocketServer::DecompressStats SocketServer::GetAndResetDecompressStats()
+{
+    DecompressStats stats{s_decompressCount, s_decompressCount ? s_decompressUsTotal / s_decompressCount : 0};
+    s_decompressUsTotal = s_decompressCount = 0;
+    return stats;
 }
 
 // DecompressBuffer
@@ -474,18 +490,20 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
         // one big read one time would work best, and we use that to copy it to a regular RAM buffer.
 
         #if USE_PSRAM
-            allocated_unique_ptr<uint8_t[]> tempBuffer;
-            try
-            {
-                tempBuffer = make_unique_internal<uint8_t[]>(packetSize + 1);   // Plus one for uzlib buffer overreach bug
-            }
-            catch (const std::bad_alloc&)
-            {
-                debugE("Could not allocate %zu bytes of internal RAM to decompress from", packetSize + 1);
-                return false;
-            }
-            memcpy(tempBuffer.get(), client.buffer.get(), packetSize);
-            auto pSourceBuffer = &tempBuffer[COMPRESSED_HEADER_SIZE];
+            // Reuses one persistent internal-RAM buffer (allocated once in the
+            // constructor) instead of allocating and freeing packetSize bytes
+            // on every single incoming frame. Tried as a fix for a ~7.6ms/packet
+            // decompression cost measured on real hardware (Waveshare 128x64
+            // board); measured again afterward and the cost was unchanged, so
+            // the allocator wasn't actually the culprit there - most likely
+            // it's DecompressBuffer() itself writing into _abOutputBuffer,
+            // which is PSRAM (see its own comment on non-linear PSRAM access
+            // being slow). Kept anyway since avoiding per-packet alloc/free
+            // churn is strictly better hygiene regardless. packetSize is
+            // already bounded by MAXIMUM_PACKET_SIZE via PacketBytesNeeded()
+            // before a packet ever reaches here.
+            memcpy(_abCompressedScratch.get(), client.buffer.get(), packetSize);
+            auto pSourceBuffer = &_abCompressedScratch[COMPRESSED_HEADER_SIZE];
         #else
             auto pSourceBuffer = &client.buffer[COMPRESSED_HEADER_SIZE];
         #endif
@@ -493,18 +511,12 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
         // TEMPORARY: alongside hub75gfx.cpp's MatrixSwapBuffers timing, this
         // attributes per-second CPU cost to decompression specifically, to
         // find out how much of the ~32fps ceiling measured on the Waveshare
-        // 128x64 board is decode versus draw. Remove once that's answered.
+        // 128x64 board is decode versus draw. Accumulated here rather than
+        // logged directly - see SocketServer::GetAndResetDecompressStats().
         const uint32_t decompressStartUs = micros();
         const bool decompressed = DecompressBuffer(pSourceBuffer, compressedSize, _abOutputBuffer.get(), expandedSize);
-        static uint32_t s_decompressUs = 0, s_decompressCount = 0;
-        s_decompressUs += micros() - decompressStartUs;
+        s_decompressUsTotal += micros() - decompressStartUs;
         s_decompressCount += 1;
-        EVERY_N_MILLISECONDS(1000)
-        {
-            debugI("Decompress/sec: packets=%u avgUs=%u", (unsigned)s_decompressCount,
-                   (unsigned)(s_decompressCount ? s_decompressUs / s_decompressCount : 0));
-            s_decompressUs = s_decompressCount = 0;
-        }
         if (!decompressed)
         {
             debugE("Error decompressing data\n");

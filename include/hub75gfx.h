@@ -129,6 +129,16 @@ public:
     static bool WaitForMatrixSwap(uint32_t timeoutMs = 100);
     static void MatrixSwapBuffers(bool copyPresentedFrame);
 
+    // TEMPORARY: MatrixSwapBuffers() accumulates these each call instead of
+    // logging directly - it runs on the render task, and debugI() from there
+    // was making the render task go silent forever the first time it fired
+    // (or crash-looping it, judging by the display continuing to render
+    // while every logging task-wide went dead). Read+reset from main.cpp's
+    // already-safe periodic status print instead. Remove once the 32fps
+    // ceiling investigation is done.
+    struct SwapStats { uint32_t swaps, waitAvgUs, flushAvgUs, flipAvgUs; };
+    static SwapStats GetAndResetSwapStats();
+
 private:
     static CRGB frameBuffers[2][kMatrixWidth * kMatrixHeight];
     static uint8_t drawBufferIndex;

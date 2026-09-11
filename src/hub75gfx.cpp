@@ -294,12 +294,26 @@ void HUB75GFX::FlushFrameToMatrix()
     if (!matrix)
         return;
 
+    // drawBufferIndex is still the about-to-be-presented buffer here (the
+    // ^1 one flips after this call returns, in MatrixSwapBuffers), so its
+    // opposite is whatever is currently actually lit on the panel.
     const CRGB* frame = frameBuffers[drawBufferIndex];
+    const CRGB* displayed = frameBuffers[drawBufferIndex ^ 1];
     for (int y = 0; y < MATRIX_HEIGHT; ++y)
     {
         for (int x = 0; x < MATRIX_WIDTH; ++x)
         {
-            const CRGB& pixel = frame[y * MATRIX_WIDTH + x];
+            const int index = y * MATRIX_WIDTH + x;
+            const CRGB& pixel = frame[index];
+            // Most effects touch only a fraction of the canvas per frame (a
+            // firework's particles against a mostly-black background, a
+            // meteor's trail, etc.) - skipping pixels already showing the
+            // right colour avoids drawPixelRGB888()'s per-pixel DMA
+            // bit-plane write for the untouched majority. Measured at
+            // ~13.9ms/frame (of a ~31ms frame budget) on a 128x64 two-panel
+            // Waveshare board before this change.
+            if (pixel == displayed[index])
+                continue;
             matrix->drawPixelRGB888(x, y, pixel.r, pixel.g, pixel.b);
         }
     }
@@ -345,6 +359,11 @@ void HUB75GFX::FlushFrameToMatrix()
 // own refresh-rate throttle and the actual per-pixel FlushFrameToMatrix()
 // cost, to find out which one is behind the ~32fps ceiling measured on the
 // Waveshare 128x64 board. Remove once that's answered.
+namespace
+{
+    uint32_t s_swapWaitUsTotal = 0, s_swapFlushUsTotal = 0, s_swapFlipUsTotal = 0, s_swapCount = 0;
+}
+
 void HUB75GFX::MatrixSwapBuffers(bool copyPresentedFrame)
 {
     const uint32_t waitStartUs = micros();
@@ -358,22 +377,26 @@ void HUB75GFX::MatrixSwapBuffers(bool copyPresentedFrame)
     matrix->flipDMABuffer();
     lastSwapMs = millis();
 
-    static uint32_t s_waitUs = 0, s_flushUs = 0, s_flipUs = 0, s_swaps = 0;
-    s_waitUs += flushStartUs - waitStartUs;
-    s_flushUs += flipStartUs - flushStartUs;
-    s_flipUs += micros() - flipStartUs;
-    s_swaps += 1;
-    EVERY_N_MILLISECONDS(1000)
-    {
-        debugI("MatrixSwapBuffers/sec: swaps=%u waitAvgUs=%u flushAvgUs=%u flipAvgUs=%u refreshHz=%d",
-               (unsigned)s_swaps, (unsigned)(s_waitUs / s_swaps), (unsigned)(s_flushUs / s_swaps),
-               (unsigned)(s_flipUs / s_swaps), GetRefreshRate());
-        s_waitUs = s_flushUs = s_flipUs = s_swaps = 0;
-    }
+    s_swapWaitUsTotal += flushStartUs - waitStartUs;
+    s_swapFlushUsTotal += flipStartUs - flushStartUs;
+    s_swapFlipUsTotal += micros() - flipStartUs;
+    s_swapCount += 1;
 
     drawBufferIndex ^= 1;
     if (copyPresentedFrame)
         memcpy(frameBuffers[drawBufferIndex], frameBuffers[presentedIndex], sizeof(frameBuffers[0]));
+}
+
+HUB75GFX::SwapStats HUB75GFX::GetAndResetSwapStats()
+{
+    SwapStats stats{
+        s_swapCount,
+        s_swapCount ? s_swapWaitUsTotal / s_swapCount : 0,
+        s_swapCount ? s_swapFlushUsTotal / s_swapCount : 0,
+        s_swapCount ? s_swapFlipUsTotal / s_swapCount : 0,
+    };
+    s_swapWaitUsTotal = s_swapFlushUsTotal = s_swapFlipUsTotal = s_swapCount = 0;
+    return stats;
 }
 
 bool HUB75GFX::WaitForMatrixSwap(uint32_t timeoutMs)
