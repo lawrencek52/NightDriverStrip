@@ -182,11 +182,6 @@ private:
     struct sockaddr_in          _address;
     std::array<ClientConnection, MAX_CLIENTS> _clients;
     allocated_unique_ptr<uint8_t []> _abOutputBuffer;          // Shared decompression scratch
-    #if USE_PSRAM
-        // Internal-RAM copy of a compressed packet's bytes, reused across every
-        // call instead of allocated/freed per packet - see ProcessCompletePacket().
-        allocated_unique_ptr<uint8_t []> _abCompressedScratch;
-    #endif
 
 public:
 

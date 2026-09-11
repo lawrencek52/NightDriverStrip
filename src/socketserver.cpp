@@ -81,9 +81,6 @@ SocketServer::SocketServer(int port, int numLeds) :
     _numLeds(numLeds)
 {
     _abOutputBuffer = make_unique_psram<uint8_t[]>(MAXIMUM_PACKET_SIZE + 1);                    // +1 for uzlib one byte overreach bug
-    #if USE_PSRAM
-        _abCompressedScratch = make_unique_internal<uint8_t[]>(MAXIMUM_PACKET_SIZE + 1);        // +1 to match, see ProcessCompletePacket()
-    #endif
     memset(&_address, 0, sizeof(_address));
 }
 
@@ -490,20 +487,31 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
         // one big read one time would work best, and we use that to copy it to a regular RAM buffer.
 
         #if USE_PSRAM
-            // Reuses one persistent internal-RAM buffer (allocated once in the
-            // constructor) instead of allocating and freeing packetSize bytes
-            // on every single incoming frame. Tried as a fix for a ~7.6ms/packet
-            // decompression cost measured on real hardware (Waveshare 128x64
-            // board); measured again afterward and the cost was unchanged, so
-            // the allocator wasn't actually the culprit there - most likely
-            // it's DecompressBuffer() itself writing into _abOutputBuffer,
-            // which is PSRAM (see its own comment on non-linear PSRAM access
-            // being slow). Kept anyway since avoiding per-packet alloc/free
-            // churn is strictly better hygiene regardless. packetSize is
-            // already bounded by MAXIMUM_PACKET_SIZE via PacketBytesNeeded()
-            // before a packet ever reaches here.
-            memcpy(_abCompressedScratch.get(), client.buffer.get(), packetSize);
-            auto pSourceBuffer = &_abCompressedScratch[COMPRESSED_HEADER_SIZE];
+            // Reverted a persistent-buffer version of this (see git history):
+            // it permanently reserved MAXIMUM_PACKET_SIZE bytes of internal
+            // RAM (24.6KB for this board's 128x64 canvas) instead of holding
+            // it only transiently, and real-hardware testing showed it didn't
+            // even help - decompression cost was unchanged (~7.6ms/packet
+            // before and after; most likely the real cost is DecompressBuffer()
+            // writing into _abOutputBuffer, which is PSRAM - see the comment
+            // above on non-linear PSRAM access being slow). On a board already
+            // this tight on internal RAM (see the pixel_color_depth_bits
+            // comment in hub75gfx.cpp), permanently sacrificing 24.6KB for no
+            // measured benefit is a bad trade - plausibly why WiFi got flaky
+            // after that change. Back to allocating only for the duration of
+            // one packet's decompression.
+            allocated_unique_ptr<uint8_t[]> tempBuffer;
+            try
+            {
+                tempBuffer = make_unique_internal<uint8_t[]>(packetSize + 1);   // Plus one for uzlib buffer overreach bug
+            }
+            catch (const std::bad_alloc&)
+            {
+                debugE("Could not allocate %zu bytes of internal RAM to decompress from", packetSize + 1);
+                return false;
+            }
+            memcpy(tempBuffer.get(), client.buffer.get(), packetSize);
+            auto pSourceBuffer = &tempBuffer[COMPRESSED_HEADER_SIZE];
         #else
             auto pSourceBuffer = &client.buffer[COMPRESSED_HEADER_SIZE];
         #endif
