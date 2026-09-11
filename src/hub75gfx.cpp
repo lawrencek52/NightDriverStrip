@@ -341,15 +341,35 @@ void HUB75GFX::FlushFrameToMatrix()
     #endif
 }
 
+// TEMPORARY: attributes each second's swap time between WaitForMatrixSwap()'s
+// own refresh-rate throttle and the actual per-pixel FlushFrameToMatrix()
+// cost, to find out which one is behind the ~32fps ceiling measured on the
+// Waveshare 128x64 board. Remove once that's answered.
 void HUB75GFX::MatrixSwapBuffers(bool copyPresentedFrame)
 {
+    const uint32_t waitStartUs = micros();
     if (!matrix || !WaitForMatrixSwap())
         return;
+    const uint32_t flushStartUs = micros();
 
     const uint8_t presentedIndex = drawBufferIndex;
     FlushFrameToMatrix();
+    const uint32_t flipStartUs = micros();
     matrix->flipDMABuffer();
     lastSwapMs = millis();
+
+    static uint32_t s_waitUs = 0, s_flushUs = 0, s_flipUs = 0, s_swaps = 0;
+    s_waitUs += flushStartUs - waitStartUs;
+    s_flushUs += flipStartUs - flushStartUs;
+    s_flipUs += micros() - flipStartUs;
+    s_swaps += 1;
+    EVERY_N_MILLISECONDS(1000)
+    {
+        debugI("MatrixSwapBuffers/sec: swaps=%u waitAvgUs=%u flushAvgUs=%u flipAvgUs=%u refreshHz=%d",
+               (unsigned)s_swaps, (unsigned)(s_waitUs / s_swaps), (unsigned)(s_flushUs / s_swaps),
+               (unsigned)(s_flipUs / s_swaps), GetRefreshRate());
+        s_waitUs = s_flushUs = s_flipUs = s_swaps = 0;
+    }
 
     drawBufferIndex ^= 1;
     if (copyPresentedFrame)

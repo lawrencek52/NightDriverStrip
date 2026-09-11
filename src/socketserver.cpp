@@ -490,7 +490,22 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
             auto pSourceBuffer = &client.buffer[COMPRESSED_HEADER_SIZE];
         #endif
 
-        if (!DecompressBuffer(pSourceBuffer, compressedSize, _abOutputBuffer.get(), expandedSize))
+        // TEMPORARY: alongside hub75gfx.cpp's MatrixSwapBuffers timing, this
+        // attributes per-second CPU cost to decompression specifically, to
+        // find out how much of the ~32fps ceiling measured on the Waveshare
+        // 128x64 board is decode versus draw. Remove once that's answered.
+        const uint32_t decompressStartUs = micros();
+        const bool decompressed = DecompressBuffer(pSourceBuffer, compressedSize, _abOutputBuffer.get(), expandedSize);
+        static uint32_t s_decompressUs = 0, s_decompressCount = 0;
+        s_decompressUs += micros() - decompressStartUs;
+        s_decompressCount += 1;
+        EVERY_N_MILLISECONDS(1000)
+        {
+            debugI("Decompress/sec: packets=%u avgUs=%u", (unsigned)s_decompressCount,
+                   (unsigned)(s_decompressCount ? s_decompressUs / s_decompressCount : 0));
+            s_decompressUs = s_decompressCount = 0;
+        }
+        if (!decompressed)
         {
             debugE("Error decompressing data\n");
             return false;
