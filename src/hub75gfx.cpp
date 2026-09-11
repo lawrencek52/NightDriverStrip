@@ -94,6 +94,17 @@ void HUB75GFX::Clear(CRGB color)
     std::fill_n(frameBuffers[0], _ledcount, color);
     std::fill_n(frameBuffers[1], _ledcount, color);
     leds = frameBuffers[drawBufferIndex];
+
+    // FlushFrameToMatrix() only pushes pixels that differ from the *other*
+    // app-level buffer, on the assumption that buffer always mirrors what's
+    // actually lit on the panel. Resetting both app buffers here without
+    // also updating the physical panel breaks that assumption: the next
+    // flush would see two already-matching (freshly black) buffers and skip
+    // every pixel, permanently stranding whatever was previously lit on the
+    // panel until some later frame happens to touch those exact pixels
+    // again. Push the clear straight to hardware too so both stay in sync.
+    if (matrix)
+        matrix->fillScreenRGB888(color.r, color.g, color.b);
 }
 
 const String& HUB75GFX::GetCaption()
