@@ -26,7 +26,7 @@
 #include "values.h"
 
 std::unique_ptr<MatrixPanel_I2S_DMA> HUB75GFX::matrix;
-CRGB HUB75GFX::frameBuffers[2][HUB75GFX::kMatrixWidth * HUB75GFX::kMatrixHeight] = {};
+allocated_unique_ptr<CRGB[]> HUB75GFX::frameBuffers[2];
 uint8_t HUB75GFX::drawBufferIndex = 0;
 uint32_t HUB75GFX::lastSwapMs = 0;
 
@@ -91,9 +91,9 @@ void HUB75GFX::fillLeds(const CRGB* pLEDs)
 
 void HUB75GFX::Clear(CRGB color)
 {
-    std::fill_n(frameBuffers[0], _ledcount, color);
-    std::fill_n(frameBuffers[1], _ledcount, color);
-    leds = frameBuffers[drawBufferIndex];
+    std::fill_n(frameBuffers[0].get(), _ledcount, color);
+    std::fill_n(frameBuffers[1].get(), _ledcount, color);
+    leds = frameBuffers[drawBufferIndex].get();
 
     // FlushFrameToMatrix() only pushes pixels that differ from the *other*
     // app-level buffer, on the assumption that buffer always mirrors what's
@@ -238,8 +238,10 @@ void HUB75GFX::StartMatrix()
     matrix->flipDMABuffer();
     matrix->clearScreen();
 
-    std::fill_n(frameBuffers[0], kMatrixWidth * kMatrixHeight, CRGB::Black);
-    std::fill_n(frameBuffers[1], kMatrixWidth * kMatrixHeight, CRGB::Black);
+    frameBuffers[0] = make_unique_psram<CRGB[]>(kMatrixWidth * kMatrixHeight);
+    frameBuffers[1] = make_unique_psram<CRGB[]>(kMatrixWidth * kMatrixHeight);
+    std::fill_n(frameBuffers[0].get(), kMatrixWidth * kMatrixHeight, CRGB::Black);
+    std::fill_n(frameBuffers[1].get(), kMatrixWidth * kMatrixHeight, CRGB::Black);
     lastSwapMs = millis();
 
     Serial.printf("Matrix Refresh Rate: %d\n", GetRefreshRate());
@@ -309,7 +311,7 @@ CRGB* HUB75GFX::GetMatrixBackBuffer()
 {
     for (auto& device : g_ptrSystem->GetDevices())
         device->UpdatePaletteCycle();
-    return frameBuffers[drawBufferIndex];
+    return frameBuffers[drawBufferIndex].get();
 }
 
 void HUB75GFX::FlushFrameToMatrix()
@@ -320,8 +322,8 @@ void HUB75GFX::FlushFrameToMatrix()
     // drawBufferIndex is still the about-to-be-presented buffer here (the
     // ^1 one flips after this call returns, in MatrixSwapBuffers), so its
     // opposite is whatever is currently actually lit on the panel.
-    const CRGB* frame = frameBuffers[drawBufferIndex];
-    const CRGB* displayed = frameBuffers[drawBufferIndex ^ 1];
+    const CRGB* frame = frameBuffers[drawBufferIndex].get();
+    const CRGB* displayed = frameBuffers[drawBufferIndex ^ 1].get();
     for (int y = 0; y < MATRIX_HEIGHT; ++y)
     {
         for (int x = 0; x < MATRIX_WIDTH; ++x)
@@ -407,7 +409,7 @@ void HUB75GFX::MatrixSwapBuffers(bool copyPresentedFrame)
 
     drawBufferIndex ^= 1;
     if (copyPresentedFrame)
-        memcpy(frameBuffers[drawBufferIndex], frameBuffers[presentedIndex], sizeof(frameBuffers[0]));
+        memcpy(frameBuffers[drawBufferIndex].get(), frameBuffers[presentedIndex].get(), kMatrixWidth * kMatrixHeight * sizeof(CRGB));
 }
 
 HUB75GFX::SwapStats HUB75GFX::GetAndResetSwapStats()

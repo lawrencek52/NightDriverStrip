@@ -140,7 +140,16 @@ public:
     static SwapStats GetAndResetSwapStats();
 
 private:
-    static CRGB frameBuffers[2][kMatrixWidth * kMatrixHeight];
+    // PSRAM rather than a plain static array: at 192x64 (3 chained panels)
+    // this pair costs 2 * 192 * 64 * sizeof(CRGB) = 72KB, which was enough to
+    // push the board into an ESP_ERR_NO_MEM boot-crash loop competing with
+    // the HUB75 library's own DMA descriptor buffer for the same scarce
+    // internal RAM (confirmed live on real hardware after adding the third
+    // panel). Only the library's own DMA buffer needs to be internal/DMA-
+    // capable RAM - this is just CPU-side staging that FlushFrameToMatrix()
+    // reads before pushing into that real DMA buffer via drawPixelRGB888(),
+    // so PSRAM (16MB, barely touched) is free capacity for it.
+    static allocated_unique_ptr<CRGB[]> frameBuffers[2];
     static uint8_t drawBufferIndex;
     static uint32_t lastSwapMs;
     static void FlushFrameToMatrix();
