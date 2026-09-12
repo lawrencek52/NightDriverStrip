@@ -133,6 +133,7 @@ namespace nd_network
 
     private:
         std::vector<std::shared_ptr<ReaderEntry>> readers;
+        std::atomic_bool _readersPaused{false};
 
     public:
 
@@ -149,6 +150,16 @@ namespace nd_network
 
         // Cancel a reader. After this, it will no longer be invoked.
         void CancelReader(size_t index);
+
+        // Pauses/resumes dispatch of every registered reader (the periodic
+        // effects that poll a REST API - weather, stocks, YouTube subscriber
+        // count, etc.) without touching WiFi reconnect, OTA, mDNS, or
+        // websocket cleanup, which all keep running in the same task
+        // regardless. Used to stop paying for those effects' network fetches
+        // while every channel is fully remote-driven and none of them are
+        // even being drawn - see drawing.cpp's UpdateNetworkReadersForActiveEffects().
+        void SetReadersPaused(bool paused) { _readersPaused.store(paused); }
+        bool AreReadersPaused() const { return _readersPaused.load(); }
 
     protected:
         // ITaskService hooks

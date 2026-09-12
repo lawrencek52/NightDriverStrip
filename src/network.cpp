@@ -621,27 +621,34 @@ namespace nd_network
             unsigned long now = millis();
             unsigned long nextEventMs = kReaderDispatchGapMs;
 
-            for (auto &entryPtr : readers)
+            // While paused, every entry's interval clock is left frozen (lastReadMs
+            // untouched) rather than skipped-but-still-ticking, so a reader that's
+            // been paused for hours doesn't fire a burst of catch-up requests the
+            // instant it's unpaused - it just resumes as if no time had passed.
+            if (!_readersPaused.load())
             {
-                auto &entry = *entryPtr;
-                if (entry.canceled.load()) continue;
-
-                unsigned long interval = entry.readInterval.load();
-                if (interval)
+                for (auto &entryPtr : readers)
                 {
-                    unsigned long target = entry.lastReadMs.load() + interval;
-                    if (target <= now || (now < entry.lastReadMs.load()))
-                        entry.flag.store(true);
+                    auto &entry = *entryPtr;
+                    if (entry.canceled.load()) continue;
 
-                    unsigned long remaining = (target > now) ? (target - now) : 0;
-                    if (remaining < nextEventMs) nextEventMs = remaining;
-                }
+                    unsigned long interval = entry.readInterval.load();
+                    if (interval)
+                    {
+                        unsigned long target = entry.lastReadMs.load() + interval;
+                        if (target <= now || (now < entry.lastReadMs.load()))
+                            entry.flag.store(true);
 
-                if (entry.flag.exchange(false))
-                {
-                    if (entry.reader)
-                        entry.reader();
-                    entry.lastReadMs.store(millis());
+                        unsigned long remaining = (target > now) ? (target - now) : 0;
+                        if (remaining < nextEventMs) nextEventMs = remaining;
+                    }
+
+                    if (entry.flag.exchange(false))
+                    {
+                        if (entry.reader)
+                            entry.reader();
+                        entry.lastReadMs.store(millis());
+                    }
                 }
             }
             notifyWait = pdMS_TO_TICKS(nextEventMs);

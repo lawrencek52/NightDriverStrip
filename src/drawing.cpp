@@ -149,6 +149,28 @@ static void UpdateAudioServiceForActiveEffects(uint32_t channelsNeedingLocalDraw
 
 #endif // ENABLE_AUDIO
 
+#if ENABLE_WIFI
+
+// UpdateNetworkReadersForActiveEffects
+//
+// Pauses NetworkReader's registered readers - the periodic REST-API polls
+// behind effects like PatternWeather, PatternStocks, and PatternSubscribers -
+// whenever no channel needs a local draw. Those effects don't even get their
+// Draw() called while their channel is fully remote-fed, but the readers
+// they registered at Init() keep firing on their own schedule regardless
+// (see NetworkReader::Run()'s dispatch loop), still paying for the HTTP
+// fetch's CPU, network, and memory cost for a screen nobody's showing.
+
+static void UpdateNetworkReadersForActiveEffects(uint32_t channelsNeedingLocalDraw)
+{
+    if (!g_ptrSystem->HasNetworkReader())
+        return;
+
+    g_ptrSystem->GetNetworkReader().SetReadersPaused(channelsNeedingLocalDraw == 0);
+}
+
+#endif // ENABLE_WIFI
+
 #if WIFI_ACTIVITY_PIN >= 0
 static bool IsWiFiDrawWindowActive()
 {
@@ -549,8 +571,12 @@ void IRAM_ATTR RenderService::Run()
             // over-claims and can wrap the uint16_t on a large multi-channel rig.
 
             auto& effectManager = g_ptrSystem->GetEffectManager();
+            uint32_t channelsNeedingLocalDraw = 0;
             if (effectManager.IsPoweredOn())
-                localPixelsDrawn = LocalDraw(ChannelsNeedingLocalDraw());
+            {
+                channelsNeedingLocalDraw = ChannelsNeedingLocalDraw();
+                localPixelsDrawn = LocalDraw(channelsNeedingLocalDraw);
+            }
             else if (effectManager.ConsumePendingBlankFrame())
                 localPixelsDrawn = static_cast<uint16_t>(effectManager.g().GetLEDCount());
             else
@@ -589,6 +615,19 @@ void IRAM_ATTR RenderService::Run()
 
             graphics.PostProcessFrame(localPixelsDrawn, wifiPixelsDrawn);
             UpdateWiFiActivityPin(wifiPixelsDrawn, localPixelsDrawn);
+            // NOT calling UpdateAudioServiceForActiveEffects() here - tried it
+            // alongside the network-reader pause below, and on real hardware
+            // (Waveshare 128x64 board) it stopped frames from reaching the
+            // physical panel entirely (software pipeline - and thus the
+            // LED-Central browser preview - kept working fine, so this is a
+            // hardware-level break, not a data one). Prime suspect: this
+            // board's onboard mic is I2S and HUB75 rides the S3's GDMA/LCD
+            // peripheral, and AudioService::Reconfigure() stopping/restarting
+            // the audio driver mid-flight likely disrupts a DMA resource HUB75
+            // is also using. Left unwired pending a real fix.
+            #if ENABLE_WIFI
+                UpdateNetworkReadersForActiveEffects(channelsNeedingLocalDraw);
+            #endif
         }
 
         // Delay at least 2ms and not more than 1s until next frame is due
