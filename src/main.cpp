@@ -342,6 +342,12 @@ void setup()
     Serial.begin(115200);
 
 #if defined(WAVESHARE_ESP32S3_RGB_MATRIX) && WAVESHARE_ESP32S3_RGB_MATRIX
+    // HWCDC's default 100ms TX timeout makes Serial.write() block (from
+    // whichever task is logging) for up to that long, retried in a loop,
+    // any time the USB host stops draining. Passing 0 makes writes give up
+    // immediately instead of blocking the calling task.
+    Serial.setTxTimeoutMs(0);
+
     // This board's native USB CDC connection drops entirely on any MCU
     // reset, not just the serial stream - the host takes a second or two to
     // re-enumerate the device afterward. Anything logged before that
