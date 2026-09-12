@@ -196,6 +196,18 @@ void HUB75GFX::StartMatrix()
     // headroom to spare, so this is scoped to just this board rather than
     // disabled for everyone.
     #if defined(WAVESHARE_ESP32S3_RGB_MATRIX) && WAVESHARE_ESP32S3_RGB_MATRIX
+        // Confirmed on real hardware: every row was rotated by exactly one
+        // pixel, with column 0's data wrapping around to the far right edge
+        // instead of the left - every effect showed it, including local ones,
+        // since it's a hardware-level shift, not a drawing bug. driver
+        // matches this panel's actual shift-driver chip (was defaulting to
+        // generic SHIFTREG); clkphase=false fixed the rotation itself, by
+        // capturing data on the correct clock edge for this panel's shift
+        // register. latch_blanking=1 was tried alongside it and left in
+        // place, though clkphase turned out to be the actual fix.
+        config.driver = HUB75_I2S_CFG::FM6124;
+        config.latch_blanking = 1;
+        config.clkphase = false;
         config.double_buff = false;
         // DMA descriptor count scales with pixel_color_depth_bits (each extra
         // bit needs more BCM passes per refresh - see setupDMA()'s
