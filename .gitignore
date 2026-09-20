@@ -20,6 +20,7 @@ config/audit.ini
 include/secrets.h
 lib/*
 NightDriverStrip.code-workspace
+ota_results.log
 site/dist
 site/favicon.ico
 **/node_modules/
