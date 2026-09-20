@@ -920,7 +920,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     if (!spec || typeof spec.name !== "string") {
       return null;
     }
-    const stripMatch = spec.name.match(/^channel(\d+)StripLength$/);
+    const stripMatch = spec.name.match(/^channel(\d+)(?:StripLength|LedsPerMeter)$/);
     if (stripMatch) {
       return `${stripMatch[1]}:strip`;
     }

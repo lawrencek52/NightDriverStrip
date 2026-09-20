@@ -75,6 +75,12 @@ SuccessResultWithMessage DeviceConfig::ValidateChannelTopology(size_t channelInd
                     + " LEDs per channel. Lower this strip or flash a build compiled for more LEDs."
             };
         }
+
+        // Unlike stripLength, 0 is valid here ("unknown density" - not every user configures it),
+        // so only the upper bound is enforced.
+        if (topology.ledsPerMeter > 1000)
+            return { false, String("Channel ") + (channelIndex + 1) + " LEDs-per-meter must be 1000 or fewer" };
+
         return { true, "" };
     }
 

@@ -152,7 +152,8 @@ void DeviceConfig::LogRuntimeConfig(const char* reason) const
             channelSummary += String("ch") + i + "=matrix:" + ch.matrixWidth + "x" + ch.matrixHeight
                 + ":serp=" + ch.matrixSerpentine + ":origin=" + static_cast<int>(ch.origin) + ":axis=" + static_cast<int>(ch.axis);
         else
-            channelSummary += String("ch") + i + "=strip:" + ch.stripLength;
+            channelSummary += String("ch") + i + "=strip:" + ch.stripLength
+                + (ch.ledsPerMeter ? (":" + String(ch.ledsPerMeter) + "/m") : String());
     }
 
     debugI("Runtime config (%s): driver=%s leds=%u channels=%u colorOrder=%s audioPin=%d",
@@ -176,6 +177,14 @@ uint16_t DeviceConfig::GetChannelLEDCount(size_t channel) const
     return ch.shape == ChannelShape::Strip
         ? ch.stripLength
         : static_cast<uint16_t>(static_cast<size_t>(ch.matrixWidth) * ch.matrixHeight);
+}
+
+uint16_t DeviceConfig::GetChannelLEDsPerMeter(size_t channel) const
+{
+    if (channel >= runtimeOutputs.channelCount || channel >= runtimeTopology.channels.size())
+        return 0;
+
+    return runtimeTopology.channels[channel].ledsPerMeter;
 }
 
 size_t DeviceConfig::GetActiveLEDCount() const
@@ -331,6 +340,7 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
     auto channelMatrixSerpentines = jsonDoc[ChannelMatrixSerpentinesTag].to<JsonArray>();
     auto channelMatrixOrigins = jsonDoc[ChannelMatrixOriginsTag].to<JsonArray>();
     auto channelMatrixAxes = jsonDoc[ChannelMatrixAxesTag].to<JsonArray>();
+    auto channelLedsPerMeter = jsonDoc[ChannelLedsPerMeterTag].to<JsonArray>();
     for (const auto& ch : runtimeTopology.channels)
     {
         channelShapes.add(static_cast<uint8_t>(ch.shape));
@@ -340,6 +350,7 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
         channelMatrixSerpentines.add(ch.matrixSerpentine);
         channelMatrixOrigins.add(static_cast<uint8_t>(ch.origin));
         channelMatrixAxes.add(static_cast<uint8_t>(ch.axis));
+        channelLedsPerMeter.add(ch.ledsPerMeter);
     }
 
     jsonDoc[OutputDriverTag] = DriverName(runtimeOutputs.driver);
@@ -446,6 +457,7 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
         auto matrixSerpentines = jsonObject[ChannelMatrixSerpentinesTag].as<JsonArrayConst>();
         auto matrixOrigins = jsonObject[ChannelMatrixOriginsTag].as<JsonArrayConst>();
         auto matrixAxes = jsonObject[ChannelMatrixAxesTag].as<JsonArrayConst>();
+        auto ledsPerMeter = jsonObject[ChannelLedsPerMeterTag].as<JsonArrayConst>();
 
         for (size_t i = 0; i < updated.topology.channels.size() && i < shapes.size(); ++i)
         {
@@ -465,6 +477,10 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
                 ch.origin = static_cast<MatrixOrigin>(std::clamp(matrixOrigins[i].as<int>(), 0, 3));
             if (i < matrixAxes.size() && matrixAxes[i].is<int>())
                 ch.axis = static_cast<SerpentineAxis>(std::clamp(matrixAxes[i].as<int>(), 0, 1));
+            // Absent for a config persisted before this field existed - correctly leaves the
+            // default-constructed 0 ("unknown density") in place.
+            if (i < ledsPerMeter.size() && ledsPerMeter[i].is<int>())
+                ch.ledsPerMeter = static_cast<uint16_t>(ledsPerMeter[i].as<int>());
         }
     }
     else if (jsonObject[LegacyMatrixWidthTag].is<int>() || jsonObject[LegacyMatrixLayoutTag].is<String>()
@@ -552,6 +568,13 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
         {
             debugW("Persisted channel matrixHeight %u out of range, resetting to %u", ch.matrixHeight, MATRIX_HEIGHT);
             ch.matrixHeight = MATRIX_HEIGHT;
+        }
+        // Unlike the dimensions above, 0 is a valid, expected value here ("unknown density") -
+        // only reset on an implausibly large persisted value.
+        if (ch.ledsPerMeter > 1000)
+        {
+            debugW("Persisted channel ledsPerMeter %u out of range, resetting to 0 (unknown)", ch.ledsPerMeter);
+            ch.ledsPerMeter = 0;
         }
     }
 

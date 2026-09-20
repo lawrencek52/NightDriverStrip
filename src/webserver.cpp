@@ -351,6 +351,11 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         auto stripLengths = j["ACTIVE_STRIP_LENGTHS"].to<JsonArray>();
         for (size_t i = 0; i < DeviceConfig::GetCompiledChannelCount(); ++i)
             stripLengths.add(deviceConfig.GetChannelLEDCount(i));
+        // 0 = density not configured by the user on this channel; LED-Central treats a 0 (or an
+        // absent array, on older firmware) as "unknown" and falls back to today's behavior.
+        auto ledsPerMeter = j["ACTIVE_LEDS_PER_METER"].to<JsonArray>();
+        for (size_t i = 0; i < DeviceConfig::GetCompiledChannelCount(); ++i)
+            ledsPerMeter.add(deviceConfig.GetChannelLEDsPerMeter(i));
         j["COMPILED_OUTPUT_DRIVER"]     = deviceConfig.GetCompiledDriverName();
         j["ACTIVE_OUTPUT_DRIVER"]       = deviceConfig.GetRuntimeDriverName();
         j["COMPILED_WS281X_COLOR_ORDER"] = DeviceConfig::GetColorOrderName(DeviceConfig::GetCompiledWS281xColorOrder());

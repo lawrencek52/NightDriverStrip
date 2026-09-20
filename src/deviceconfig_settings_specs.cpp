@@ -23,14 +23,14 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         // can temporarily require both old and new contiguous blocks.
         constexpr size_t kFixedSettingSpecCapacity = 37;
         const auto compiledChannelCount = GetCompiledChannelCount();
-        // Each compiled channel contributes a per-channel pin spec (two on APA102) plus 7
+        // Each compiled channel contributes a per-channel pin spec (two on APA102) plus 8
         // per-channel topology specs (shape, stripLength, matrixWidth, matrixHeight,
-        // matrixSerpentine, matrixOrigin, matrixAxis) on non-HUB75 builds.
+        // matrixSerpentine, matrixOrigin, matrixAxis, ledsPerMeter) on non-HUB75 builds.
         const size_t outputSettingSpecCount = compiledChannelCount
         #if USE_APA102
-            * 9
+            * 10
         #else
-            * 8
+            * 9
         #endif
         ;
         settingSpecs.reserve(kFixedSettingSpecCapacity + outputSettingSpecCount);
@@ -386,14 +386,14 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             static constexpr const char* kAxisValues[] = { "horizontal", "vertical" };
             static constexpr const char* kAxisLabels[] = { "Horizontal (each strip is a row)", "Vertical (each strip is a column)" };
 
-            // 7 fields per channel (shape, stripLength, matrixWidth, matrixHeight,
-            // matrixSerpentine, matrixOrigin, matrixAxis), 4 strings per field (name,
-            // friendlyName, description, apiPath). See the class-level comment on
+            // 8 fields per channel (shape, stripLength, matrixWidth, matrixHeight,
+            // matrixSerpentine, matrixOrigin, matrixAxis, ledsPerMeter), 4 strings per field
+            // (name, friendlyName, description, apiPath). See the class-level comment on
             // _channelTopologyStrings (deviceconfig.h) for why these live in a pre-sized
             // member vector rather than locals - the SettingSpec objects keep raw c_str()
             // pointers into it for the life of the device, so it must never reallocate
             // mid-loop.
-            constexpr size_t kFieldsPerChannel = 7;
+            constexpr size_t kFieldsPerChannel = 8;
             constexpr size_t kStringsPerField = 4;
             constexpr size_t kStringsPerChannel = kFieldsPerChannel * kStringsPerField;
 
@@ -522,6 +522,23 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
                     .Widget       = SettingSpec::WidgetKind::Select,
                     .OptionValues = { kAxisValues[0], kAxisValues[1] },
                     .OptionLabels = { kAxisLabels[0], kAxisLabels[1] }
+                }));
+
+                snprintf(buf, sizeof(buf), "channel%zuLedsPerMeter", i); fieldSlot(i, 7, 0) = buf;
+                snprintf(buf, sizeof(buf), "Channel %zu LEDs per meter", i + 1); fieldSlot(i, 7, 1) = buf;
+                snprintf(buf, sizeof(buf), "Physical LED density of channel %zu, in LEDs per meter of strip. Used "
+                                            "when this channel's shape is Strip; leave unset if unknown.", i + 1); fieldSlot(i, 7, 2) = buf;
+                snprintf(buf, sizeof(buf), "topology.channels[%zu].ledsPerMeter", i); fieldSlot(i, 7, 3) = buf;
+                settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+                    .Name         = fieldSlot(i, 7, 0).c_str(),
+                    .FriendlyName = fieldSlot(i, 7, 1).c_str(),
+                    .Description  = fieldSlot(i, 7, 2).c_str(),
+                    .Type         = SettingSpec::SettingType::PositiveBigInteger,
+                    .MinimumValue = 1.0,
+                    .MaximumValue = 1000.0,
+                    .Section      = kSectionTopology,
+                    .Priority     = static_cast<int>(i * kFieldsPerChannel + 7),
+                    .ApiPath      = fieldSlot(i, 7, 3).c_str()
                 }));
             }
         }

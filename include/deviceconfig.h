@@ -178,6 +178,12 @@ class DeviceConfig : public IJSONSerializable
         bool matrixSerpentine = true;
         MatrixOrigin origin = MatrixOrigin::TopLeft;
         SerpentineAxis axis = SerpentineAxis::Vertical;
+        // Physical LED density of this channel's strip, in LEDs/meter. Unlike the other topology
+        // fields, this is never inferred from a compiled default - 0 means "not configured by the
+        // user" (unknown density), which callers (e.g. the /statistics/static ACTIVE_LEDS_PER_METER
+        // report) must treat as absent rather than a real 0-density strip. Only meaningful when
+        // shape == Strip.
+        uint16_t ledsPerMeter = 0;
 
         // Written by hand rather than "= default" - the xtensa-esp32 GCC 8.4.0 toolchain
         // doesn't support defaulted comparison operators even under -std=c++2a.
@@ -189,7 +195,8 @@ class DeviceConfig : public IJSONSerializable
                 && matrixHeight == other.matrixHeight
                 && matrixSerpentine == other.matrixSerpentine
                 && origin == other.origin
-                && axis == other.axis;
+                && axis == other.axis
+                && ledsPerMeter == other.ledsPerMeter;
         }
         bool operator!=(const ChannelTopology& other) const { return !(*this == other); }
     };
@@ -399,6 +406,7 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * ChannelMatrixSerpentinesTag = "channelMatrixSerpentines";
     static constexpr const char * ChannelMatrixOriginsTag = "channelMatrixOrigins";
     static constexpr const char * ChannelMatrixAxesTag = "channelMatrixAxes";
+    static constexpr const char * ChannelLedsPerMeterTag = "channelLedsPerMeter";
     // Legacy (pre-per-channel-topology) tags, kept only so DeserializeFromJSON can migrate an
     // old persisted config forward the first time it loads under new firmware. Never written.
     static constexpr const char * LegacyMatrixWidthTag = "matrixWidth";
@@ -606,6 +614,8 @@ class DeviceConfig : public IJSONSerializable
     String GetLayoutSummary() const;
     // Per-channel LED count: stripLength for Strip-shaped channels, width*height for Matrix-shaped.
     uint16_t GetChannelLEDCount(size_t channel) const;
+    // Returns 0 if the channel is out of range or its density hasn't been configured by the user.
+    uint16_t GetChannelLEDsPerMeter(size_t channel) const;
     size_t GetActiveLEDCount() const;
     int GetAudioInputPin() const { return audioInputPin; }
     OutputDriver GetOutputDriver() const { return runtimeOutputs.driver; }

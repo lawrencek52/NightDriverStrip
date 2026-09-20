@@ -252,6 +252,9 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
         channelObj["matrixSerpentine"] = ch.matrixSerpentine;
         channelObj["matrixOrigin"] = MatrixOriginName(ch.origin);
         channelObj["matrixAxis"] = SerpentineAxisName(ch.axis);
+        // 0 = not configured by the user (unknown density); serialized as-is rather than omitted
+        // so the UI can distinguish "unknown" from "loading".
+        channelObj["ledsPerMeter"] = ch.ledsPerMeter;
     }
 
     topology["ledCount"] = GetActiveLEDCount();
@@ -468,6 +471,12 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
                         return { false, String("topology.channels[") + i + "].matrixAxis is invalid" };
                     ch.axis = parsedAxis.value();
                 }
+
+                auto [requestedLedsPerMeter, ledsPerMeterMessage] = ParseTopologyDimension(channelObj, "ledsPerMeter");
+                if (!requestedLedsPerMeter.has_value() && !ledsPerMeterMessage.isEmpty())
+                    return { false, String("topology.channels[") + i + "]." + ledsPerMeterMessage };
+                if (requestedLedsPerMeter.has_value())
+                    ch.ledsPerMeter = requestedLedsPerMeter.value();
             }
             out.runtimeConfigTouched = true;
         }
