@@ -145,7 +145,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
   function bindElements() {
     const ids = [
-      "connectionStatus", "connectionStatusText", "hostValue", "webPortValue",
+      "connectionStatus", "connectionStatusText", "webPortValue",
       "ipAddressValue", "hostnameValue",
       "prevEffectButton", "nextEffectButton", "refreshEffectsButton",
       "effectIntervalInput", "saveIntervalButton", "statsRefreshInput", "autoRefreshToggle",
@@ -153,7 +153,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       "summaryCurrentEffect", "summaryEffectStatus", "summaryInterval", "summaryIntervalRemaining",
       "summaryTopology", "summaryDriver", "summaryLedFps", "summaryAudioFps", "summaryCpu",
       "summaryCpuCores", "summaryHeap", "summaryPsram",
-      "effectsMeta", "effectsTableBody", "channelStrip", "reloadSettingsButton", "applySettingsButton",
+      "effectsMeta", "effectsTableBody", "coreColumnHeader", "channelStrip", "reloadSettingsButton", "applySettingsButton",
       "applySettingsRebootButton", "deviceSettingsForm", "statsTimestamp", "statsBuildInfo", "statsGrid",
       "previewConnectButton", "previewDisconnectButton", "previewStatus", "previewWrap", "previewCanvas",
       "audioConnectButton", "audioDisconnectButton", "audioStatus", "audioWrap", "audioCanvas",
@@ -216,7 +216,6 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
   }
 
   function initializeStaticShell() {
-    els.hostValue.textContent = window.location.hostname || "--";
     els.webPortValue.textContent = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
     els.statsRefreshInput.value = state.statsRefreshSeconds;
     els.autoRefreshToggle.checked = state.autoRefresh;
@@ -523,6 +522,12 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     const channelEffects = Array.isArray(effects.channelEffects) ? effects.channelEffects.map(Number) : [];
     const independent = !!effects.channelsIndependent;
 
+    // The Core/User distinction is only worth a column when the loaded effects are actually a
+    // mix of both - a device with nothing but built-in (or nothing but user-added) effects has
+    // the same value in every row, so the column carries no information.
+    const showCoreColumn = effects.Effects.some((effect) => !!effect.core) && effects.Effects.some((effect) => !effect.core);
+    els.coreColumnHeader.hidden = !showCoreColumn;
+
     const rows = effects.Effects.map((effect, index) => {
       const tr = document.createElement("tr");
       const playingOn = channelEffects.reduce((strips, playing, channel) => {
@@ -581,6 +586,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
       const coreCell = document.createElement("td");
       coreCell.textContent = effect.core ? "Core" : "User";
+      coreCell.hidden = !showCoreColumn;
       tr.appendChild(coreCell);
 
       const actionsCell = document.createElement("td");
@@ -871,6 +877,13 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
         if (shapeFor) {
           fieldNode.dataset.shapeFor = shapeFor;
         }
+        // Mark every per-channel field - topology rows and Output's per-channel pins alike -
+        // with its channel index, so a controller compiled for more channels than it currently
+        // uses doesn't show rows/pins for channels beyond the active count.
+        const channelIndex = getChannelIndexFor(spec);
+        if (channelIndex !== null) {
+          fieldNode.dataset.channel = String(channelIndex);
+        }
         // Tag each channel's own Shape select (spec.name driven, not the mangled DOM "name"
         // attribute buildSettingField assigns) so the change listener below knows which fields
         // should trigger a full re-render.
@@ -900,15 +913,18 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     }
     els.deviceSettingsForm.addEventListener("change", (event) => {
       const target = event.target;
-      if (!target || target.tagName !== "SELECT" || !target.closest(".settings-section-topology")) {
+      if (!target) {
         return;
       }
-      // Only a channel's Shape select needs a full redraw; every other field in the topology
-      // section can just update the draft in place.
-      if (!target.closest("[data-channel-shape-field]")) {
+      // Only a channel's own Shape select needs a full redraw, since its sibling fields (matrix
+      // dims/serpentine/origin/axis vs. strip length) hide or show based on it. Everything else
+      // - including the strip channel count, which lives in this same section and drives which
+      // channel rows/pins are active - can just resync visibility in place.
+      if (target.tagName === "SELECT" && target.closest(".settings-section-topology") && target.closest("[data-channel-shape-field]")) {
+        renderSettingsForm();
         return;
       }
-      renderSettingsForm();
+      syncTopologyLayoutVisibility();
     });
     _matrixLayoutRerenderWired = true;
   }
@@ -932,28 +948,53 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
     return null;
   }
 
-  // For every channel{i}Shape field in the topology section, hide that channel's sibling
-  // fields (data-shape-for="i:strip" or "i:matrix") whenever they don't match the channel's own
-  // current shape (draft wins over saved). Each channel toggles independently, unlike the old
-  // single section-wide matrix/individualStrips class.
+  // Returns the channel index a per-channel field belongs to - a topology row
+  // (channel{N}Shape/StripLength/Matrix*/LedsPerMeter) or an Output pin (stripDataPin{N},
+  // apa102ClockPin{N}) - or null for a field that isn't per-channel (e.g. the strip channel
+  // count itself, or the output driver/color order). Used to hide rows/pins for channels at or
+  // beyond the currently active channel count, in both the Topology and Output panels.
+  function getChannelIndexFor(spec) {
+    if (!spec || typeof spec.name !== "string") {
+      return null;
+    }
+    const match = spec.name.match(
+      /^(?:channel(\d+)(?:Shape|StripLength|Matrix(?:Width|Height|Serpentine|Origin|Axis)|LedsPerMeter)|stripDataPin(\d+)|apa102ClockPin(\d+))$/
+    );
+    if (!match) {
+      return null;
+    }
+    return Number(match[1] ?? match[2] ?? match[3]);
+  }
+
+  // Hides every per-channel field - topology rows and Output's per-channel pins alike - for a
+  // channel at or beyond the currently active strip channel count (ws281xChannelCount, draft
+  // wins over saved), on top of - not instead of - each topology field's own shape-conditional
+  // visibility (data-shape-for="i:strip"/"i:matrix" vs. channel i's own current shape). A
+  // controller compiled for more channels than it currently uses only sees the rows/pins that
+  // are actually active.
   function syncTopologyLayoutVisibility() {
-    const sectionNode = els.deviceSettingsForm.querySelector(".settings-section-topology");
-    if (!sectionNode) {
-      return;
+    const activeChannelCount = Math.max(1, Math.round(Number(getDraftOrCurrentDeviceSetting("ws281xChannelCount")) || 1));
+
+    const topologySection = els.deviceSettingsForm.querySelector(".settings-section-topology");
+    const channelModes = {};
+    if (topologySection) {
+      topologySection.querySelectorAll("[data-shape-for]").forEach((fieldNode) => {
+        const [channel] = fieldNode.dataset.shapeFor.split(":");
+        if (channelModes[channel] === undefined) {
+          const shapeValue = getDraftOrCurrentDeviceSetting(`channel${channel}Shape`);
+          channelModes[channel] = shapeValue === "matrix" ? "matrix" : "strip";
+        }
+      });
     }
 
-    const channelModes = {};
-    sectionNode.querySelectorAll("[data-shape-for]").forEach((fieldNode) => {
-      const [channel] = fieldNode.dataset.shapeFor.split(":");
-      if (channelModes[channel] === undefined) {
-        const shapeValue = getDraftOrCurrentDeviceSetting(`channel${channel}Shape`);
-        channelModes[channel] = shapeValue === "matrix" ? "matrix" : "strip";
+    els.deviceSettingsForm.querySelectorAll("[data-channel]").forEach((fieldNode) => {
+      const beyondActiveCount = Number(fieldNode.dataset.channel) >= activeChannelCount;
+      if (fieldNode.dataset.shapeFor) {
+        const [channel, requiredShape] = fieldNode.dataset.shapeFor.split(":");
+        fieldNode.hidden = beyondActiveCount || channelModes[channel] !== requiredShape;
+      } else {
+        fieldNode.hidden = beyondActiveCount;
       }
-    });
-
-    sectionNode.querySelectorAll("[data-shape-for]").forEach((fieldNode) => {
-      const [channel, requiredShape] = fieldNode.dataset.shapeFor.split(":");
-      fieldNode.hidden = channelModes[channel] !== requiredShape;
     });
   }
 

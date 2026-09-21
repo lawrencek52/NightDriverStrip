@@ -618,12 +618,13 @@ textarea {
   padding: 0 16px;
 }
 
-/* Topology section: each channel's own Shape select independently hides/shows that channel's
-   strip-only or matrix-only sibling fields via the native `hidden` attribute, toggled in
-   syncTopologyLayoutVisibility() (site/app.js). .setting-row sets its own `display`, which an
-   author rule always wins over the browser's UA default `[hidden]{display:none}`, so this
-   override is needed for `hidden` to actually take effect here. */
-.settings-section-topology [hidden] {
+/* Settings form: per-channel fields (Topology rows, Output pins) are hidden via the native
+   `hidden` attribute - both for a channel whose shape doesn't match a sibling field's strip-only
+   or matrix-only requirement, and for any channel at or beyond the currently active channel
+   count - toggled in syncTopologyLayoutVisibility() (site/app.js). .setting-row sets its own
+   `display`, which an author rule always wins over the browser's UA default `[hidden]{display:
+   none}`, so this override is needed for `hidden` to actually take effect here. */
+.settings-section-body [hidden] {
   display: none !important;
 }
 

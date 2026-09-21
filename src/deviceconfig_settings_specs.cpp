@@ -561,12 +561,16 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name              = WS281xChannelCountTag,
             .FriendlyName      = "Strip channel count",
-            .Description       = "Number of active strip channels within the compiled maximum.",
+            .Description       = "Number of active strip channels within the compiled maximum. Also "
+                                  "controls how many per-channel rows the Topology and Output panels show.",
             .Type              = SettingSpec::SettingType::PositiveBigInteger,
             .MinimumValue      = 1.0,
             .MaximumValue      = (double)GetCompiledChannelCount(),
-            .Section           = kSectionOutput,
-            .Priority          = 1,
+            // Lives at the top of the Topology panel (Priority -1, ahead of every per-channel
+            // row below) rather than in Output, since it's what determines how many of those
+            // rows - in both Topology and Output - the web UI shows as active.
+            .Section           = kSectionTopology,
+            .Priority          = -1,
             .ApiPath           =
             #if USE_APA102
                 "outputs.apa102.channelCount",

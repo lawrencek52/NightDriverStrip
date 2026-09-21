@@ -19,6 +19,7 @@
 #include <AsyncJson.h>
 #include <memory>
 
+#include "deviceconfig.h"
 #include "effectmanager.h"
 #include "ledstripeffect.h"
 #include "systemcontainer.h"
@@ -50,7 +51,12 @@ void CWebServer::GetEffectListText(AsyncWebServerRequest * pRequest)
         auto channelFrameRates = j["channelFrameRates"].to<JsonArray>();
         auto channelFrameRateOverrides = j["channelFrameRateOverrides"].to<JsonArray>();
 
-        for (size_t channel = 0; channel < EffectManager::ChannelCount(); channel++)
+        // The active channel count (EffectManager::ChannelCount() is the compiled max, e.g. 4,
+        // regardless of how many are actually in use) - so a controller running fewer strips
+        // than it was compiled for reports, and the web UI's per-strip effect buttons show,
+        // only the channels that are actually active.
+        const auto activeChannelCount = g_ptrSystem->GetDeviceConfig().GetChannelCount();
+        for (size_t channel = 0; channel < activeChannelCount; channel++)
         {
             channelEffects.add(effectManager.GetChannelEffectIndex(channel));
             channelFrameRates.add(effectManager.GetChannelFrameRate(channel));
