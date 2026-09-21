@@ -534,7 +534,10 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
                     .FriendlyName = fieldSlot(i, 7, 1).c_str(),
                     .Description  = fieldSlot(i, 7, 2).c_str(),
                     .Type         = SettingSpec::SettingType::PositiveBigInteger,
-                    .MinimumValue = 1.0,
+                    // 0 is a valid, deliberate "unknown density" sentinel here (see the field's
+                    // own description above), unlike every other PositiveBigInteger topology
+                    // field on this channel where zero is genuinely invalid.
+                    .MinimumValue = 0.0,
                     .MaximumValue = 1000.0,
                     .Section      = kSectionTopology,
                     .Priority     = static_cast<int>(i * kFieldsPerChannel + 7),

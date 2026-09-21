@@ -158,7 +158,10 @@ ResultWithMessage<std::optional<int>> DeviceConfig::ResolveUnifiedAudioInputPin(
 
 namespace
 {
-    ResultWithMessage<std::optional<uint16_t>> ParseTopologyDimension(JsonObjectConst topology, const char* key)
+    // minimumValue is 1 for every real dimension (stripLength, matrixWidth/Height - zero is
+    // never valid) but 0 for ledsPerMeter, where zero is the deliberate "unknown density"
+    // sentinel (see DeviceConfig::ChannelTopology::ledsPerMeter) rather than a malformed value.
+    ResultWithMessage<std::optional<uint16_t>> ParseTopologyDimension(JsonObjectConst topology, const char* key, uint16_t minimumValue = 1)
     {
         auto value = topology[key];
         if (value.isNull())
@@ -168,7 +171,7 @@ namespace
             return { std::nullopt, String(key) + " must be a positive integer" };
 
         const size_t dimension = value.as<size_t>();
-        if (dimension == 0)
+        if (dimension < minimumValue)
             return { std::nullopt, String(key) + " must be greater than zero" };
 
         if (dimension > std::numeric_limits<uint16_t>::max())
@@ -472,7 +475,7 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
                     ch.axis = parsedAxis.value();
                 }
 
-                auto [requestedLedsPerMeter, ledsPerMeterMessage] = ParseTopologyDimension(channelObj, "ledsPerMeter");
+                auto [requestedLedsPerMeter, ledsPerMeterMessage] = ParseTopologyDimension(channelObj, "ledsPerMeter", 0);
                 if (!requestedLedsPerMeter.has_value() && !ledsPerMeterMessage.isEmpty())
                     return { false, String("topology.channels[") + i + "]." + ledsPerMeterMessage };
                 if (requestedLedsPerMeter.has_value())
