@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <AsyncJson.h>
 #include <cstdlib>
+#include <esp_timer.h>
 #include <FS.h>
 #include <limits>
 #include <utility>
@@ -46,6 +47,8 @@
 #include "effects.h"
 #include "gfxbase.h"
 #include "improvserial.h"
+#include "nd_network.h"
+#include "socketserver.h"
 #include "soundanalyzer.h"
 #include "systemcontainer.h"
 #include "taskmgr.h"
@@ -379,6 +382,10 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         // __DATE__/__TIME__ are stamped by the preprocessor on every compile, so this
         // always reflects when the running firmware was built, with no version bump needed.
         j["BUILD_TIMESTAMP"]            = __DATE__ " " __TIME__;
+        j["IP_ADDRESS"]                 = nd_network::GetWiFiLocalIP();
+        // The device's own mDNS name (see SetupOTA's WiFi.getHostname() in network.cpp),
+        // not necessarily the host the browser used to reach this page.
+        j["HOSTNAME"]                   = deviceConfig.GetHostname() + ".local";
     }
 
     if ((statsType & StatisticsType::Dynamic) != StatisticsType::None)
@@ -397,6 +404,16 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         j["CPU_USED"]              = taskManager.GetCPUUsagePercent();
         j["CPU_USED_CORE0"]        = taskManager.GetCPUUsagePercent(0);
         j["CPU_USED_CORE1"]        = taskManager.GetCPUUsagePercent(1);
+
+        // Microseconds since boot, never wraps in practice (~292,000 years) unlike millis().
+        j["UPTIME_SECONDS"]       = static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL);
+
+        #if INCOMING_WIFI_ENABLED
+            auto packetStats = SocketServer::GetPacketStats();
+            j["PACKETS_RX"]             = packetStats.received;
+            j["PACKETS_TX"]             = packetStats.sent;
+            j["PACKETS_LOST_OR_RETRIED"] = packetStats.lostOrRetried;
+        #endif
     }
 
     AddCORSHeaderAndSendResponse(pRequest, response);

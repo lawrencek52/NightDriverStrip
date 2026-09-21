@@ -215,6 +215,10 @@ namespace
 {
     // TEMPORARY: see SocketServer::GetAndResetDecompressStats().
     uint32_t s_decompressUsTotal = 0, s_decompressCount = 0;
+
+    // See SocketServer::GetPacketStats(). Incremented in ProcessCompletePacket()
+    // (received) and SendResponsePacket() (sent/lost), all on the socket task.
+    uint32_t s_packetsReceived = 0, s_packetsSent = 0, s_packetsLostOrRetried = 0;
 }
 
 SocketServer::DecompressStats SocketServer::GetAndResetDecompressStats()
@@ -222,6 +226,11 @@ SocketServer::DecompressStats SocketServer::GetAndResetDecompressStats()
     DecompressStats stats{s_decompressCount, s_decompressCount ? s_decompressUsTotal / s_decompressCount : 0};
     s_decompressUsTotal = s_decompressCount = 0;
     return stats;
+}
+
+SocketServer::PacketStats SocketServer::GetPacketStats()
+{
+    return { s_packetsReceived, s_packetsSent, s_packetsLostOrRetried };
 }
 
 // DecompressBuffer
@@ -474,6 +483,8 @@ static size_t ResponseChannelFor(const uint8_t* packet, size_t packetLength)
 
 bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packetSize)
 {
+    s_packetsReceived++;
+
     if (DWORDFromMemory(client.buffer.get()) == COMPRESSED_HEADER)
     {
         const uint32_t compressedSize = DWORDFromMemory(&client.buffer[4]);
@@ -528,12 +539,14 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
         if (!decompressed)
         {
             debugE("Error decompressing data\n");
+            s_packetsLostOrRetried++;
             return false;
         }
 
         if (!ProcessIncomingData(_abOutputBuffer, expandedSize))
         {
             debugE("Error processing data\n");
+            s_packetsLostOrRetried++;
             return false;
         }
 
@@ -551,6 +564,7 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
     if (!ProcessIncomingData(client.buffer, packetSize))
     {
         debugE("Error processing packet with command %u from wifi\n", command16);
+        s_packetsLostOrRetried++;
         return false;
     }
 
@@ -602,8 +616,13 @@ void SocketServer::SendResponsePacket(int fd, size_t channel)
 
     // Not fatal, and it doesn't affect the frame we just accepted: a client
     // that isn't draining its responses simply misses this one.
-    if (sizeof(response) != write(fd, &response, sizeof(response)))
+    if (sizeof(response) == write(fd, &response, sizeof(response)))
+        s_packetsSent++;
+    else
+    {
         debugV("Unable to send response back to server.");
+        s_packetsLostOrRetried++;
+    }
 }
 
 void SocketServer::ReapIdleClients()

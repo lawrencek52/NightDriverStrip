@@ -526,6 +526,18 @@ void IRAM_ATTR RenderService::Run()
     {
         g_Values.AppTime.NewFrame();
 
+        // An OTA flash write is in progress (see SetupOTA's onStart/onEnd/onError in
+        // network.cpp, which set/clear this flag). Effect rendering and strip output
+        // compete with the OTA task for CPU and interrupt time - RMT/DMA strip writes in
+        // particular were intermittently starving or corrupting the flash write - so go
+        // fully idle rather than just slowing down, until the flag clears (upload finished
+        // or failed; a successful upload reboots the device anyway).
+        if (g_Values.UpdateStarted)
+        {
+            delay(500);
+            continue;
+        }
+
         uint16_t localPixelsDrawn   = 0;
         uint16_t wifiPixelsDrawn    = 0;
         double frameStartTime       = g_Values.AppTime.FrameStartTime();
@@ -634,12 +646,6 @@ void IRAM_ATTR RenderService::Run()
 
         constexpr auto minimumDelay = 5;
         delay( std::max(minimumDelay, CalcDelayUntilNextFrame(frameStartTime, localPixelsDrawn, wifiPixelsDrawn) ));
-
-        // Once an OTA flash update has started, we don't want to hog the CPU or it goes quite slowly,
-        // so we'll slow down to share the CPU a bit once the update has begun
-
-        if (g_Values.UpdateStarted)
-            delay(500);
     }
 
     SetWiFiActivityPin(false);

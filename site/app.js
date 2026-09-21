@@ -146,6 +146,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
   function bindElements() {
     const ids = [
       "connectionStatus", "connectionStatusText", "hostValue", "webPortValue",
+      "ipAddressValue", "hostnameValue",
       "prevEffectButton", "nextEffectButton", "refreshEffectsButton",
       "effectIntervalInput", "saveIntervalButton", "statsRefreshInput", "autoRefreshToggle",
       "rebootButton", "resetDeviceConfigButton", "resetEffectsConfigButton",
@@ -1955,6 +1956,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       return;
     }
 
+    els.ipAddressValue.textContent = staticStats.IP_ADDRESS || "--";
+    els.hostnameValue.textContent = staticStats.HOSTNAME || "--";
+
     const cards = [];
     const outputRows = [
       ["Compiled driver", staticStats.COMPILED_OUTPUT_DRIVER],
@@ -1991,6 +1995,13 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       ["LED FPS", formatNumber(dynamicStats.LED_FPS)],
       ["Serial FPS", formatNumber(dynamicStats.SERIAL_FPS)]
     ], dynamicStats.CPU_USED));
+
+    cards.push(statCard("Network", [
+      ["Uptime", formatUptime(dynamicStats.UPTIME_SECONDS)],
+      ["Rx packets", formatCountOrNA(dynamicStats.PACKETS_RX)],
+      ["Tx packets", formatCountOrNA(dynamicStats.PACKETS_TX)],
+      ["Lost/retried", formatCountOrNA(dynamicStats.PACKETS_LOST_OR_RETRIED)]
+    ]));
 
     cards.push(statCard("Memory", [
       ["Heap free", formatBytes(dynamicStats.HEAP_FREE)],
@@ -2840,6 +2851,22 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
 
   function formatPercent(value) {
     return Number(value || 0).toFixed(1);
+  }
+
+  function formatCountOrNA(value) {
+    return value === undefined || value === null ? "--" : formatNumber(value);
+  }
+
+  function formatUptime(totalSeconds) {
+    if (totalSeconds === undefined || totalSeconds === null) {
+      return "--";
+    }
+    const seconds = Math.max(0, Math.floor(Number(totalSeconds)));
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return days > 0 ? `${days}d ${hours}h ${minutes}m` : hours > 0 ? `${hours}h ${minutes}m ${secs}s` : `${minutes}m ${secs}s`;
   }
 
   function formatBytes(bytes) {

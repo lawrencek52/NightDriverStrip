@@ -258,6 +258,12 @@ public:
     // status print instead. Remove once the 32fps ceiling investigation is done.
     struct DecompressStats { uint32_t packets, avgUs; };
     static DecompressStats GetAndResetDecompressStats();
+
+    // Cumulative since boot (never reset, unlike DecompressStats above) - polled
+    // occasionally by /statistics/dynamic rather than logged from a hot path, so a
+    // running total suits it better than a reset-on-read window.
+    struct PacketStats { uint32_t received, sent, lostOrRetried; };
+    static PacketStats GetPacketStats();
 };
 
 #endif
