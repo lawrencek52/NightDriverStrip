@@ -727,7 +727,9 @@ public:
         channelConfig.gpio_num         = static_cast<gpio_num_t>(_pin);
         channelConfig.clk_src          = RMT_CLK_SRC_DEFAULT;
         channelConfig.resolution_hz    = kIrTickResolutionHz;
-        channelConfig.mem_block_symbols = 192;     // 4x S3 RAM blocks; reduces ISR pressure
+        // 4x S3 RAM blocks reduces ISR pressure, but an RX channel can only borrow blocks
+        // from the RX channels after it - the C5/C6 have two, so they top out at 96.
+        channelConfig.mem_block_symbols = std::min(192, SOC_RMT_MEM_WORDS_PER_CHANNEL * SOC_RMT_RX_CANDIDATES_PER_GROUP);
         channelConfig.flags.invert_in   = false;
         channelConfig.flags.with_dma    = false;
 

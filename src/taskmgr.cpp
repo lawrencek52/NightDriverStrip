@@ -67,7 +67,9 @@ void TaskManager::begin()
     // measure how much time is "wasted" at that lower priority and deem it to have been free CPU
 
     xTaskCreatePinnedToCore(IdleTask::IdleTaskEntry, "Idle0", IDLE_STACK_SIZE, &_taskIdle0, tskIDLE_PRIORITY + 1, &_hIdle0, 0);
+#if !CONFIG_FREERTOS_UNICORE
     xTaskCreatePinnedToCore(IdleTask::IdleTaskEntry, "Idle1", IDLE_STACK_SIZE, &_taskIdle1, tskIDLE_PRIORITY + 1, &_hIdle1, 1);
+#endif
 
     // We need to turn off the watchdogs because our idle measurement tasks burn all of the idle time just
     // to see how much there is (it's how they measure free CPU).  Thus, we starve the system's normal idle tasks
@@ -75,13 +77,17 @@ void TaskManager::begin()
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(0));
+    #if !CONFIG_FREERTOS_UNICORE
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCore(1));
+    #endif
 #else
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1));
 #endif
     esp_task_wdt_add(_hIdle0);
+#if !CONFIG_FREERTOS_UNICORE
     esp_task_wdt_add(_hIdle1);
+#endif
 }
 
 void TaskManager::CheckHeap()

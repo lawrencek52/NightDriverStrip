@@ -146,6 +146,13 @@ public:
 
     float GetCPUUsagePercent(int iCore = -1) const
     {
+#if CONFIG_FREERTOS_UNICORE
+        // Single-core chips (C3/C5/C6) never start the core 1 idle task; report it as idle.
+        if (iCore == 1)
+            return 0.0f;
+        if (iCore < 0)
+            return _taskIdle0.GetCPUUsage();
+#endif
         if (iCore < 0)
             return (_taskIdle0.GetCPUUsage() + _taskIdle1.GetCPUUsage()) / 2;
         else if (iCore == 0)

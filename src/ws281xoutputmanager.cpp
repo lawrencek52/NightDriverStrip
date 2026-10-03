@@ -7,10 +7,11 @@
 // ESP32 runtime WS281x output manager. This is the small indirection layer that
 // lets us change pins/channel count/live LED count without changing effect code.
 //
-// The runtime transport intentionally uses the ESP-IDF RMT driver directly
-// instead of FastLED's ESP32 transport. FastLED remains responsible for CRGB
-// color handling in the effect layer, while NightDriver owns the mutable RMT
-// channel/pin configuration required for live topology/output changes.
+// The runtime transport intentionally uses the ESP-IDF RMT driver (or PARLIO on
+// chips whose RMT can't DMA, such as the ESP32-C5) directly instead of FastLED's
+// ESP32 transport. FastLED remains responsible for CRGB color handling in the
+// effect layer, while NightDriver owns the mutable channel/pin configuration
+// required for live topology/output changes.
 //
 //---------------------------------------------------------------------------
 
@@ -48,12 +49,34 @@
 #endif
 #endif
 
+// Chips whose RMT can't DMA (C5/C6/H2) refill RMT memory from an ISR mid-frame;
+// on a single core shared with WiFi that refill gets starved and long strips
+// glitch. They also have only two RMT TX channels. Their PARLIO peripheral
+// streams every strip in parallel straight from a DMA buffer instead.
+#if ESP_IDF_VERSION_MAJOR >= 5 && SOC_PARLIO_SUPPORTED && !SOC_RMT_SUPPORT_DMA
+#define WS281X_USE_PARLIO 1
+#include <driver/parlio_tx.h>
+#include <hal/parlio_ll.h>
+#else
+#define WS281X_USE_PARLIO 0
+#endif
+
 #include "gfxbase.h"
 #include "pixelformat.h"
 #include "ws281xgfx.h"
 
+// One channel's packed wire bytes for the frame being shown.
+struct FrameChannel
+{
+    size_t index;
+    const uint8_t* bytes;
+    size_t byteCount;
+    int8_t pin;
+    size_t ledCount;
+};
+
 // Transport base class. Concrete subclasses (in the anonymous namespace below)
-// wrap a single ESP-IDF RMT driver generation so the manager itself stays
+// wrap a single ESP-IDF output peripheral so the manager itself stays
 // driver-agnostic. The base class lives at file scope so that the matching
 // `class Transport;` forward declaration in the header (used by the
 // `std::unique_ptr<Transport>` member) refers to the same type.
@@ -64,26 +87,70 @@ public:
     // Configure (or reconfigure) a single TX channel for the given GPIO. Caller
     // guarantees the channel is not currently installed when this is invoked.
     // `byteCount` is the size of the outputBytes buffer for that channel
-    // (always 3 * ledCount).
+    // (ledCount * PixelFormat::BytesPerPixel()).
     virtual SuccessResultWithMessage ConfigureChannel(size_t channelIndex, gpio_num_t pin, size_t byteCount) = 0;
 
     // Tear down a previously installed channel. Idempotent: safe to call on
     // an already-released channel.
     virtual void ReleaseChannel(size_t channelIndex) = 0;
 
-    // Queue a frame for transmission on this channel. Implementation is
-    // responsible for any driver-specific error logging.
-    virtual void TransmitChannel(size_t channelIndex, const uint8_t* bytes, size_t byteCount, int8_t pin, size_t activeLEDCount) = 0;
-
-    // Block until the most recent frame on this channel has finished
-    // transmitting (or the timeout elapses). Implementation does its own
-    // error logging.
-    virtual void WaitForChannel(size_t channelIndex, int8_t pin, size_t activeLEDCount) = 0;
+    // Transmit one frame on every listed channel and block until it has gone
+    // out (or timed out). Implementation does its own error logging.
+    virtual void ShowFrame(const FrameChannel* channels, size_t count) = 0;
 };
 
 namespace
 {
     static_assert(NUM_CHANNELS <= 8, "ESP32 RMT path supports up to 8 WS281x channels");
+
+    // RMT drives each channel independently, so a frame is queued channel by
+    // channel and then waited on channel by channel.
+    class RmtTransport : public ::Transport
+    {
+    protected:
+        // Queue a frame for transmission on this channel.
+        virtual void TransmitChannel(size_t channelIndex, const uint8_t* bytes, size_t byteCount, int8_t pin, size_t activeLEDCount) = 0;
+
+        // Block until the most recent frame on this channel has finished
+        // transmitting (or the timeout elapses).
+        virtual void WaitForChannel(size_t channelIndex, int8_t pin, size_t activeLEDCount) = 0;
+
+    public:
+        void ShowFrame(const FrameChannel* channels, size_t count) override
+        {
+            // Queue every active channel first, then wait for completion in a second
+            // pass. This keeps all strips in the same frame as closely aligned as the
+            // RMT API allows.
+            //
+            // Starting all channels in the same instant means their initial DMA
+            // descriptor-fill bursts land on the shared memory bus simultaneously;
+            // with NUM_CHANNELS > 2 that contention can stall one channel's burst
+            // long enough to glitch a few dozen bits into its stream (observed
+            // around pixel 15 on channels 2/3, the ones started last). A short,
+            // fixed stagger between each channel's transmit call spreads those
+            // bursts out. This is deliberately much smaller than a full frame -
+            // waiting for each channel to finish before starting the next doesn't
+            // scale to the 1200-LED/20fps target (4 channels x ~36ms each would blow
+            // the ~50ms frame budget), whereas a few hundred microseconds of stagger
+            // is negligible at any supported frame rate/LED count.
+            constexpr uint32_t kInterChannelStaggerUs = 500;
+
+            for (size_t i = 0; i < count; ++i)
+            {
+                const auto& channel = channels[i];
+                if (channel.index > 0)
+                    delayMicroseconds(kInterChannelStaggerUs);
+
+                TransmitChannel(channel.index, channel.bytes, channel.byteCount, channel.pin, channel.ledCount);
+            }
+
+            // The transmit wait is also where live reconfiguration pressure tends to
+            // show up first, so failures here are logged separately from the queue step.
+
+            for (size_t i = 0; i < count; ++i)
+                WaitForChannel(channels[i].index, channels[i].pin, channels[i].ledCount);
+        }
+    };
 
     // Common timing
     //
@@ -192,7 +259,7 @@ namespace
     // the rmt_channel_t value passed to every API call. Only present on
     // IDF 4 because legacy and driver_ng headers can't coexist in the same
     // translation unit on IDF 5 (rmt_channel_t name collision).
-    class LegacyTransport : public ::Transport
+    class LegacyTransport : public RmtTransport
     {
     public:
         SuccessResultWithMessage ConfigureChannel(size_t channelIndex, gpio_num_t pin, size_t /*byteCount*/) override
@@ -299,7 +366,7 @@ namespace
         return symbol;
     }
 
-    class DriverNgTransport : public ::Transport
+    class DriverNgTransport : public RmtTransport
     {
         rmt_channel_handle_t _channels[NUM_CHANNELS] = {};
         rmt_encoder_handle_t _encoders[NUM_CHANNELS] = {};
@@ -453,9 +520,225 @@ namespace
     };
 #endif // ESP_IDF_VERSION_MAJOR >= 5
 
+#if WS281X_USE_PARLIO
+    // PARLIO (parallel IO) TX transport. One TX unit clocks every strip out at
+    // once - channel N is data lane N - from a single DMA buffer, so the CPU
+    // isn't involved after the transfer starts.
+    //
+    // Each WS2812 bit is encoded as three 400 ns slots at 2.5 MHz: high, data,
+    // low. That gives T0H = 400 ns, T1H = 800 ns and 1.2 us per bit, inside the
+    // WS2812B datasheet window (+/-150 ns). 2.5 MHz is an exact integer division
+    // of the 240 MHz PARLIO source clock, which matters because the divider has
+    // no fractional part.
+    //
+    // The unit is rebuilt lazily on the first frame after any channel change, so
+    // ApplyConfig's per-channel release/configure sequence costs one rebuild.
+    class ParlioTransport : public ::Transport
+    {
+        static constexpr uint32_t kSlotHz      = 2'500'000;
+        static constexpr size_t   kSlotsPerBit = 3;
+        // ~300 us of trailing low slots latches WS2812B V5 parts (>280 us) even
+        // when frames are sent back to back. A multiple of 8 keeps the frame
+        // byte-aligned at every lane width.
+        static constexpr size_t   kLatchSlots  = 752;
+
+        static_assert(NUM_CHANNELS <= SOC_PARLIO_TX_UNIT_MAX_DATA_WIDTH, "PARLIO TX unit has too few data lanes for NUM_CHANNELS");
+
+        std::array<gpio_num_t, NUM_CHANNELS> _pins;
+        std::array<size_t, NUM_CHANNELS>     _byteCounts{};
+        parlio_tx_unit_handle_t _unit = nullptr;
+        uint8_t* _frame = nullptr;     // DMA buffer: encoded slots + zeroed latch tail
+        size_t   _frameBytes = 0;
+        size_t   _maxBytes = 0;        // longest channel, in wire bytes
+        size_t   _width = 0;           // lane count, a power of two as PARLIO requires
+        bool     _dirty = true;
+
+        struct Layout { size_t width; size_t maxBytes; size_t frameBytes; };
+
+        Layout ComputeLayout() const
+        {
+            size_t lanes = 0, maxBytes = 0;
+            for (size_t i = 0; i < NUM_CHANNELS; ++i)
+            {
+                if (_pins[i] == GPIO_NUM_NC)
+                    continue;
+                lanes = i + 1;
+                maxBytes = std::max(maxBytes, _byteCounts[i]);
+            }
+            if (!lanes)
+                return {};
+
+            size_t width = 1;
+            while (width < lanes)
+                width <<= 1;
+            return { width, maxBytes, (maxBytes * 8 * kSlotsPerBit + kLatchSlots) * width / 8 };
+        }
+
+        void Teardown()
+        {
+            if (_unit)
+            {
+                parlio_tx_unit_wait_all_done(_unit, 100);
+                parlio_tx_unit_disable(_unit);
+                parlio_del_tx_unit(_unit);
+                _unit = nullptr;
+            }
+            free(_frame);
+            _frame = nullptr;
+            _frameBytes = _maxBytes = _width = 0;
+        }
+
+        bool Rebuild()
+        {
+            Teardown();
+            _dirty = false;
+
+            const auto layout = ComputeLayout();
+            if (!layout.width)
+                return false;
+
+            _frame = static_cast<uint8_t*>(heap_caps_calloc(1, layout.frameBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+            if (!_frame)
+            {
+                debugE("PARLIO: failed to allocate %zu-byte DMA frame buffer", layout.frameBytes);
+                return false;
+            }
+
+            parlio_tx_unit_config_t config = {};
+            config.clk_src            = PARLIO_CLK_SRC_DEFAULT;
+            config.clk_in_gpio_num    = GPIO_NUM_NC;
+            config.output_clk_freq_hz = kSlotHz;
+            config.data_width         = layout.width;
+            std::fill(std::begin(config.data_gpio_nums), std::end(config.data_gpio_nums), GPIO_NUM_NC);
+            std::copy(_pins.begin(), _pins.end(), config.data_gpio_nums);
+            config.clk_out_gpio_num   = GPIO_NUM_NC;
+            config.valid_gpio_num     = GPIO_NUM_NC;
+            config.trans_queue_depth  = 1;
+            config.max_transfer_size  = layout.frameBytes;
+            config.sample_edge        = PARLIO_SAMPLE_EDGE_POS;
+            config.bit_pack_order     = PARLIO_BIT_PACK_ORDER_LSB;
+
+            if (const auto error = parlio_new_tx_unit(&config, &_unit); error != ESP_OK)
+            {
+                debugE("parlio_new_tx_unit failed: %s", esp_err_to_name(error));
+                _unit = nullptr;
+                Teardown();
+                return false;
+            }
+            if (const auto error = parlio_tx_unit_enable(_unit); error != ESP_OK)
+            {
+                debugE("parlio_tx_unit_enable failed: %s", esp_err_to_name(error));
+                Teardown();
+                return false;
+            }
+
+            _width = layout.width;
+            _maxBytes = layout.maxBytes;
+            _frameBytes = layout.frameBytes;
+            return true;
+        }
+
+        // Transpose the channels' wire bytes into PARLIO samples. Every slot is
+        // one sample of _width bits (bit N = lane N), packed LSB-first into the
+        // buffer to match PARLIO_BIT_PACK_ORDER_LSB. A lane past the end of its
+        // strip gets no high slot at all, so shorter strips just see idle low.
+        //
+        // This runs over every wire bit of every frame, so it avoids per-lane
+        // loops: each byte position's lane bytes are packed into one 64-bit word
+        // (lane N in byte N), and the multiply below gathers bit `bit` of all
+        // eight bytes into the top byte in one step - the multiplier's shifts
+        // (56 - 7N) land byte N's bit at result bit 56 + N with no carries.
+        // A WS2812 bit's three slots (high, data, low) are then appended to the
+        // output as one 3 * _width-bit group.
+        void Encode(const FrameChannel* channels, size_t count)
+        {
+            constexpr uint64_t kLaneBits = 0x0101010101010101ULL;
+            constexpr uint64_t kGather   = 0x0102040810204080ULL;
+
+            uint8_t* out = _frame;
+            uint64_t acc = 0;
+            size_t accBits = 0;
+            const size_t groupBits = kSlotsPerBit * _width;
+
+            for (size_t byteIndex = 0; byteIndex < _maxBytes; ++byteIndex)
+            {
+                uint32_t live = 0;
+                uint64_t lanes = 0;
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const auto& channel = channels[i];
+                    if (byteIndex < channel.byteCount)
+                    {
+                        live |= 1u << channel.index;
+                        lanes |= uint64_t(channel.bytes[byteIndex]) << (8 * channel.index);
+                    }
+                }
+
+                for (int bit = 7; bit >= 0; --bit)     // WS2812 is MSB-first
+                {
+                    const uint32_t data = (((lanes >> bit) & kLaneBits) * kGather) >> 56;
+                    acc |= uint64_t(live | data << _width) << accBits;     // third slot is 0
+                    for (accBits += groupBits; accBits >= 8; accBits -= 8, acc >>= 8)
+                        *out++ = static_cast<uint8_t>(acc);
+                }
+            }
+        }
+
+    public:
+        ParlioTransport() { _pins.fill(GPIO_NUM_NC); }
+        ~ParlioTransport() override { Teardown(); }
+
+        SuccessResultWithMessage ConfigureChannel(size_t channelIndex, gpio_num_t pin, size_t byteCount) override
+        {
+            _pins[channelIndex] = pin;
+            _byteCounts[channelIndex] = byteCount;
+            _dirty = true;
+
+            // A whole frame must fit one PARLIO transaction; splitting it would
+            // leave an ISR-timed gap mid-frame, which is what this path avoids.
+            if (const auto layout = ComputeLayout(); layout.frameBytes * 8 > PARLIO_LL_TX_MAX_BITS_PER_FRAME)
+            {
+                ReleaseChannel(channelIndex);
+                return { false, str_sprintf("PARLIO frame of %zu bits exceeds the %u-bit hardware limit; shorten the longest strip",
+                                            layout.frameBytes * 8, static_cast<unsigned>(PARLIO_LL_TX_MAX_BITS_PER_FRAME)) };
+            }
+            return { true, "" };
+        }
+
+        void ReleaseChannel(size_t channelIndex) override
+        {
+            _pins[channelIndex] = GPIO_NUM_NC;
+            _byteCounts[channelIndex] = 0;
+            _dirty = true;
+        }
+
+        void ShowFrame(const FrameChannel* channels, size_t count) override
+        {
+            if (_dirty)
+                Rebuild();
+            if (!_unit || !count)
+                return;
+
+            Encode(channels, count);
+
+            parlio_transmit_config_t txConfig = {};
+            txConfig.idle_value = 0;
+            if (const auto error = parlio_tx_unit_transmit(_unit, _frame, _frameBytes * 8, &txConfig); error != ESP_OK)
+            {
+                debugE("parlio_tx_unit_transmit failed: %s", esp_err_to_name(error));
+                return;
+            }
+            if (const auto error = parlio_tx_unit_wait_all_done(_unit, 100); error != ESP_OK)
+                debugE("parlio_tx_unit_wait_all_done failed: %s", esp_err_to_name(error));
+        }
+    };
+#endif // WS281X_USE_PARLIO
+
     std::unique_ptr<::Transport> CreateTransport()
     {
-#if ESP_IDF_VERSION_MAJOR >= 5
+#if WS281X_USE_PARLIO
+        return std::make_unique<ParlioTransport>();
+#elif ESP_IDF_VERSION_MAJOR >= 5
         return std::make_unique<DriverNgTransport>();
 #else
         return std::make_unique<LegacyTransport>();
@@ -648,6 +931,9 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
     // owns CRGB frame buffers; the runtime transport owns these temporary-once-
     // per-channel packed bytes that match the selected color order.
 
+    std::array<FrameChannel, NUM_CHANNELS> frame;
+    size_t frameCount = 0;
+
     for (size_t channelIndex = 0; channelIndex < _activeChannelCount && channelIndex < devices.size(); ++channelIndex)
     {
         auto& state = _channels[channelIndex];
@@ -702,50 +988,12 @@ void WS281xOutputManager::Show(const std::vector<std::shared_ptr<GFXBase>>& devi
                       kDefaultAmbientCw,
                       kDefaultAmbientWw,
                       kDefaultExtractRatio);
+
+        frame[frameCount++] = { channelIndex, output, state.byteCount, state.pin, state.ledCount };
     }
 
     const auto showStartMicros = micros();
-
-    // Queue every active channel first, then wait for completion in a second
-    // pass. This keeps all strips in the same frame as closely aligned as the
-    // RMT API allows.
-    //
-    // Starting all channels in the same instant means their initial DMA
-    // descriptor-fill bursts land on the shared memory bus simultaneously;
-    // with NUM_CHANNELS > 2 that contention can stall one channel's burst
-    // long enough to glitch a few dozen bits into its stream (observed
-    // around pixel 15 on channels 2/3, the ones started last). A short,
-    // fixed stagger between each channel's transmit call spreads those
-    // bursts out. This is deliberately much smaller than a full frame -
-    // waiting for each channel to finish before starting the next doesn't
-    // scale to the 1200-LED/20fps target (4 channels x ~36ms each would blow
-    // the ~50ms frame budget), whereas a few hundred microseconds of stagger
-    // is negligible at any supported frame rate/LED count.
-    constexpr uint32_t kInterChannelStaggerUs = 500;
-
-    for (size_t channelIndex = 0; channelIndex < _activeChannelCount && channelIndex < devices.size(); ++channelIndex)
-    {
-        auto& state = _channels[channelIndex];
-        if (!state.active || !state.installed || !state.outputBytes)
-            continue;
-
-        if (channelIndex > 0)
-            delayMicroseconds(kInterChannelStaggerUs);
-
-        _transport->TransmitChannel(channelIndex, state.outputBytes.get(), state.byteCount, state.pin, state.ledCount);
-    }
-
-    // The transmit wait is also where live reconfiguration pressure tends to
-    // show up first, so failures here are logged separately from the queue step.
-
-    for (size_t channelIndex = 0; channelIndex < _activeChannelCount && channelIndex < devices.size(); ++channelIndex)
-    {
-        auto& state = _channels[channelIndex];
-        if (!state.active || !state.installed)
-            continue;
-
-        _transport->WaitForChannel(channelIndex, state.pin, state.ledCount);
-    }
+    _transport->ShowFrame(frame.data(), frameCount);
 
     const auto showElapsedMicros = micros() - showStartMicros;
     if (showElapsedMicros > 50000UL)

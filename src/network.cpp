@@ -41,6 +41,7 @@
     #include <limits>
     #include <mutex>
     #include <nvs.h>
+    #include <soc/soc_caps.h>
     #include <WiFi.h>
 #elif ENABLE_ESPNOW
     #include <WiFi.h>
@@ -334,7 +335,25 @@ namespace nd_network
             debugW("Connecting to Wifi SSID: \"%s\" - ESP32 Free Memory: %zu, PSRAM:%zu, PSRAM Free: %zu\n",
                    WiFi_ssid.c_str(), (size_t)ESP.getFreeHeap(), (size_t)ESP.getPsramSize(), (size_t)ESP.getFreePsram());
 
+#if SOC_WIFI_SUPPORT_5G
+            // Dual-band chips (ESP32-C5): with one SSID on both bands, the strongest AP wins and
+            // 2.4 GHz usually reads several dB hotter, yet 5 GHz is far less congested. Arduino's
+            // begin() zeroes the whole STA config, so configure without connecting, give 5 GHz
+            // APs an RSSI head start, then connect.
+            #ifndef WIFI_5G_PREFERENCE_DB
+                #define WIFI_5G_PREFERENCE_DB 15
+            #endif
+            WiFi.begin(WiFi_ssid.c_str(), WiFi_password.c_str(), 0, nullptr, false);
+            if (wifi_config_t conf; esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK)
+            {
+                conf.sta.threshold.rssi_5g_adjustment = WIFI_5G_PREFERENCE_DB;
+                esp_wifi_set_config(WIFI_IF_STA, &conf);
+            }
+            if (const auto error = esp_wifi_connect(); error != ESP_OK)
+                debugW("esp_wifi_connect failed: %s", esp_err_to_name(error));
+#else
             WiFi.begin(WiFi_ssid.c_str(), WiFi_password.c_str());
+#endif
 
             debugV("Done Wifi.begin, waiting for connection...");
         }
@@ -342,7 +361,7 @@ namespace nd_network
         if (IsWiFiConnected())
         {
             DisableWiFiPowerSave("connected");
-            debugW("Connected to AP with BSSID: \"%s\", received IP: %s", WiFi.BSSIDstr().c_str(), WiFi.localIP().toString().c_str());
+            debugW("Connected to AP with BSSID: \"%s\" on channel %d, RSSI %d, received IP: %s", WiFi.BSSIDstr().c_str(), (int)WiFi.channel(), (int)WiFi.RSSI(), WiFi.localIP().toString().c_str());
             debugI("WiFi network: subnet=%s gateway=%s dns=%s rssi=%d",
                    WiFi.subnetMask().toString().c_str(),
                    WiFi.gatewayIP().toString().c_str(),

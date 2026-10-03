@@ -241,6 +241,20 @@ extern std::recursive_mutex g_effect_manager_mutex;
 // Core 0 with the ESP-IDF WiFi driver task, leaving Core 1 dedicated to the
 // render loop so the LED serial stream is never interrupted by network work.
 
+#if CONFIG_FREERTOS_UNICORE
+// Single-core chips (C3/C5/C6): pinning to core 1 would fail task creation, so
+// everything shares core 0 and the priorities above decide who runs.
+#define DRAWING_CORE            0
+#define NET_CORE                0
+#define AUDIO_CORE              0
+#define AUDIOSERIAL_CORE        0
+#define SCREEN_CORE             0
+#define DEBUG_CORE              0
+#define SOCKET_CORE             0
+#define REMOTE_CORE             0
+#define JSONWRITER_CORE         0
+#define COLORDATA_CORE          0
+#else
 #define DRAWING_CORE            1
 #define NET_CORE                0
 #define AUDIO_CORE              0
@@ -251,6 +265,7 @@ extern std::recursive_mutex g_effect_manager_mutex;
 #define REMOTE_CORE             1
 #define JSONWRITER_CORE         0
 #define COLORDATA_CORE          0
+#endif
 
 #define FASTLED_INTERNAL            1   // Suppresses the compilation banner from FastLED
 #define __STDC_FORMAT_MACROS
