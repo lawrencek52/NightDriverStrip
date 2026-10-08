@@ -2,7 +2,7 @@
 #
 # Build the firmware for each hardware group and push it over OTA (espota) to
 # every device on the local network. Device lists mirror the comment block next
-# to [env:xiao_sense_ota] in platformio.ini (currently around line 702) --
+# to [env:xiao_sense_ota] in platformio.ini (currently around line 701) --
 # update both places together.
 #
 # Usage:
@@ -42,13 +42,16 @@ for tool in jq curl python3; do
     fi
 done
 
-# group: "pio-environment name:ip name:ip ..."
-# Add new Waveshare panels to the second group as they join the network.
+# group: "pio-environment|name:ip name:ip ..." -- one environment per group, since
+# every device in a group is flashed with that group's single firmware image.
+# Each Waveshare panel has its own canvas width, so each gets its own env/group.
 # NOTE: don't call this array GROUPS -- bash reserves that name for the
 # process's numeric group ID list and silently clobbers it.
 OTA_GROUPS=(
-  "xiao_sense|tester1:192.168.86.21 deck1:192.168.86.69 deck2:192.168.86.72 deck3:192.168.86.68 matrix-16x16:192.168.86.74"
-  "waveshare_esp32s3_rgb_matrix|matrix-192x64:192.168.86.37"
+  "xiao_c5|deck1:192.168.86.81 deck2:192.168.86.77"
+  "xiao_sense|deck3:192.168.86.68 matrix-16x16:192.168.86.74"
+  "waveshare_esp32s3_rgb_matrix_128x64|matrix-128x64:192.168.86.37"
+  "waveshare_esp32s3_rgb_matrix_64x64|matrix-64x64:192.168.86.79"
 )
 
 ESPOTA="$(find "$HOME/.platformio/packages/framework-arduinoespressif32/tools" -maxdepth 1 -name espota.py 2>/dev/null | head -1)"
