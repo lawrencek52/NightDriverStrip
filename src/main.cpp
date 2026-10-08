@@ -823,6 +823,10 @@ void loop()
             }
         }
 
+        #if ENABLE_WIFI
+            nd_network::CheckWiFiLossWatchdog();
+        #endif
+
         #if ENABLE_OTA
             try
             {

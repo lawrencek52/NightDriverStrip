@@ -407,6 +407,13 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
 
         // Microseconds since boot, never wraps in practice (~292,000 years) unlike millis().
         j["UPTIME_SECONDS"]       = static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL);
+        j["RESET_REASON"]         = static_cast<int>(esp_reset_reason());
+
+        #if ENABLE_WIFI
+            j["WIFI_RSSI"]                 = nd_network::GetWiFiRSSI();
+            j["WIFI_WATCHDOG_REBOOTS"]     = nd_network::GetWiFiWatchdogReboots();
+            j["WIFI_WATCHDOG_LAST_REASON"] = nd_network::GetWiFiWatchdogLastReason();
+        #endif
 
         #if INCOMING_WIFI_ENABLED
             auto packetStats = SocketServer::GetPacketStats();

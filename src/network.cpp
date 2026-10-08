@@ -29,7 +29,9 @@
 //---------------------------------------------------------------------------
 
 #include "globals.h"
+#include <esp_attr.h>
 #include <esp_ota_ops.h>
+#include <esp_system.h>
 #include <fcntl.h>
 
 #if ENABLE_WIFI
@@ -489,6 +491,71 @@ namespace nd_network
     int  GetLastWiFiDisconnectReason() { return l_LastWiFiDisconnectReason.load(); }
     void ClearLastWiFiDisconnectReason() { l_LastWiFiDisconnectReason.store(0); }
 
+    // CheckWiFiLossWatchdog
+    //
+    // ConnectToWiFi's retry loop should bring a dropped connection back within
+    // a minute, but deployed boards have been seen to drop off the network and
+    // never return - still running local effects, unreachable until power
+    // cycled. Rebooting is the one recovery that doesn't depend on the WiFi
+    // driver or the network thread being in a sane state. 0 disables it.
+
+    #ifndef WIFI_LOST_REBOOT_MS
+        #define WIFI_LOST_REBOOT_MS (3 * 60 * 1000)
+    #endif
+
+    // __NOINIT_ATTR memory keeps its contents across a software restart but
+    // is garbage after power-on, hence the magic value.
+    static constexpr uint32_t kWiFiWatchdogMagic = 0x57494649; // "WIFI"
+    static __NOINIT_ATTR uint32_t l_WiFiWatchdogMagic;
+    static __NOINIT_ATTR uint32_t l_WiFiWatchdogReboots;
+    static __NOINIT_ATTR int32_t  l_WiFiWatchdogLastReason;
+
+    static void EnsureWiFiWatchdogStateValid()
+    {
+        if (l_WiFiWatchdogMagic != kWiFiWatchdogMagic || esp_reset_reason() == ESP_RST_POWERON)
+        {
+            l_WiFiWatchdogMagic      = kWiFiWatchdogMagic;
+            l_WiFiWatchdogReboots    = 0;
+            l_WiFiWatchdogLastReason = 0;
+        }
+    }
+
+    uint32_t GetWiFiWatchdogReboots()    { EnsureWiFiWatchdogStateValid(); return l_WiFiWatchdogReboots; }
+    int      GetWiFiWatchdogLastReason() { EnsureWiFiWatchdogStateValid(); return l_WiFiWatchdogLastReason; }
+
+    void CheckWiFiLossWatchdog()
+    {
+        if (WIFI_LOST_REBOOT_MS == 0)
+            return;
+
+        static bool s_everConnected = false;
+        static unsigned long s_lastConnectedMs = 0;
+
+        if (IsWiFiConnected())
+        {
+            s_everConnected = true;
+            s_lastConnectedMs = millis();
+            return;
+        }
+
+        // Never connected means bad credentials or no AP in range, which a
+        // reboot won't fix; Improv owns WiFi while it's provisioning.
+        if (!s_everConnected || l_ProvisioningActive.load())
+            return;
+
+        if (millis() - s_lastConnectedMs < WIFI_LOST_REBOOT_MS)
+            return;
+
+        EnsureWiFiWatchdogStateValid();
+        l_WiFiWatchdogReboots++;
+        l_WiFiWatchdogLastReason = l_LastWiFiDisconnectReason.load();
+        debugE("WiFi lost for %lu s (last disconnect reason %d), rebooting",
+               (unsigned long)(WIFI_LOST_REBOOT_MS / 1000), (int)l_WiFiWatchdogLastReason);
+        Serial.flush();
+        delay(100);
+        ESP.restart();
+    }
+
     // ClearWiFiConfig
     //
     // Attempts to erase the WiFi ssid and password for a given source from NVS
@@ -755,6 +822,9 @@ namespace nd_network
     void SetProvisioningActive(bool)       {}
     int  GetLastWiFiDisconnectReason()     { return 0; }
     void ClearLastWiFiDisconnectReason()   {}
+    void     CheckWiFiLossWatchdog()       {}
+    uint32_t GetWiFiWatchdogReboots()      { return 0; }
+    int      GetWiFiWatchdogLastReason()   { return 0; }
 
     // The network handling loop is gone in non-WiFi builds; NetworkReader
     // is only declared when ENABLE_WIFI=1 (see nd_network.h).

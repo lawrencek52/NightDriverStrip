@@ -100,6 +100,15 @@ namespace nd_network
     int  GetLastWiFiDisconnectReason();
     void ClearLastWiFiDisconnectReason();
 
+    // WiFi-loss watchdog. Called from the Arduino loop task (not the network
+    // thread, so a wedged reader there can't stop it): once WiFi has connected
+    // at least once, losing it for WIFI_LOST_REBOOT_MS restarts the board.
+    // The reboot count and the disconnect reason that led to the last one
+    // survive the software restart (not a power cycle) for /statistics.
+    void     CheckWiFiLossWatchdog();
+    uint32_t GetWiFiWatchdogReboots();
+    int      GetWiFiWatchdogLastReason();
+
     // Persistence
     void UpdateNTPTime();
     bool ReadWiFiConfig(WifiCredSource source, String &WiFi_ssid, String &WiFi_password);
