@@ -56,6 +56,8 @@
 #if ESP_IDF_VERSION_MAJOR >= 5 && SOC_PARLIO_SUPPORTED && !SOC_RMT_SUPPORT_DMA
 #define WS281X_USE_PARLIO 1
 #include <driver/parlio_tx.h>
+#include <esp_cache.h>
+#include <esp_memory_utils.h>
 #include <hal/parlio_ll.h>
 #else
 #define WS281X_USE_PARLIO 0
@@ -541,6 +543,7 @@ namespace
         // when frames are sent back to back. A multiple of 8 keeps the frame
         // byte-aligned at every lane width.
         static constexpr size_t   kLatchSlots  = 752;
+        static constexpr size_t   kCacheLine   = 64;      // >= every chip's L1/L2 line size
 
         static_assert(NUM_CHANNELS <= SOC_PARLIO_TX_UNIT_MAX_DATA_WIDTH, "PARLIO TX unit has too few data lanes for NUM_CHANNELS");
 
@@ -597,7 +600,17 @@ namespace
             if (!layout.width)
                 return false;
 
-            _frame = static_cast<uint8_t*>(heap_caps_calloc(1, layout.frameBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+            // Prefer PSRAM: at full length the frame is ~44 KB, and on the C5 that much
+            // internal RAM is the difference between WiFi/lwIP surviving a burst of browser
+            // connections or deadlocking for lack of RX buffers. GDMA reads PSRAM directly;
+            // the buffer is cache-line aligned so ShowFrame can write the cache back. The
+            // cost is that a flash write (config save, OTA) can stall the shared MSPI bus
+            // and glitch the frame in flight.
+#if SOC_PSRAM_DMA_CAPABLE
+            _frame = static_cast<uint8_t*>(heap_caps_aligned_calloc(kCacheLine, 1, layout.frameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
+#endif
+            if (!_frame)
+                _frame = static_cast<uint8_t*>(heap_caps_calloc(1, layout.frameBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
             if (!_frame)
             {
                 debugE("PARLIO: failed to allocate %zu-byte DMA frame buffer", layout.frameBytes);
@@ -720,6 +733,8 @@ namespace
                 return;
 
             Encode(channels, count);
+            if (esp_ptr_external_ram(_frame))
+                esp_cache_msync(_frame, _frameBytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 
             parlio_transmit_config_t txConfig = {};
             txConfig.idle_value = 0;
@@ -814,8 +829,15 @@ SuccessResultWithMessage WS281xOutputManager::RecreateChannel(size_t channelInde
         //   "rmt: Using buffer allocated from psram"  -> ESP_ERR_INVALID_ARG
         // heap_caps_malloc with DMA+INTERNAL pins it correctly for both
         // drivers, so we use the same allocator either way.
+#if WS281X_USE_PARLIO
+        // PARLIO only reads these with the CPU while encoding its own DMA frame,
+        // so keep them out of scarce internal RAM.
+        auto* mem = static_cast<uint8_t*>(heap_caps_malloc_prefer(byteCount, 2,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+#else
         auto* mem = static_cast<uint8_t*>(heap_caps_malloc(byteCount,
                             MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+#endif
         if (!mem)
             return { false, "failed to allocate DMA-capable WS281x byte buffer" };
 
