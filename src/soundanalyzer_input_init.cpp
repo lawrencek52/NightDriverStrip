@@ -175,11 +175,11 @@ namespace
             ok &= WriteReg(0x1C, 0x6A);
             ok &= WriteReg(0x37, 0x08);
 
-            // DAC at +10 dB (0xD3; 0xBF is 0 dB, 0.5 dB per step). The warble's
-            // own sample level sets the volume (see WarbleAmplitude()); at the
-            // top of the range this deliberately clips, for the hard,
-            // distorted sound of the original Mitel ringer.
-            ok &= WriteReg(0x32, 0xD3);
+            // DAC at 0 dB (0xBF, 0.5 dB per step): the warble's own sample
+            // level sets the volume (see WarbleAmplitude()), and its
+            // distortion is built into the waveform (kWarbleDrive) rather than
+            // clipped here, so it sounds the same at every volume.
+            ok &= WriteReg(0x32, 0xBF);
             return ok;
         }
 
@@ -222,15 +222,19 @@ namespace
     constexpr float kWarbleAlternationHz = 11.0f;
     constexpr uint32_t kRingOnMs = 1000;
     constexpr uint32_t kRingCycleMs = 4000;
-    // Sample level at volume 100, just under full scale; with the DAC at
-    // +10 dB (see ES8311Codec::begin()) the top of the range clips.
+    // Sample level at volume 100, just under full scale.
     constexpr float kWarbleMaxAmplitude = 30000.0f;
+    // The original Mitel ringer was deliberately distorted. The waveform is a
+    // sine overdriven by this factor and clipped flat - the sound the DAC
+    // made at volume 86 when it was set 10 dB hot - then scaled to volume,
+    // so the distortion is the same at every level.
+    constexpr float kWarbleDrive = 1.29f;
     // The boot ring's volume - the level the original self-test tone played
-    // at (about 29 dB below the maximum).
-    constexpr uint8_t kBootWarbleVolume = 42;
+    // at (about 19 dB below the maximum).
+    constexpr uint8_t kBootWarbleVolume = 62;
 
     // Sample amplitude for a 0-100 volume on a decibel scale: 100 is the
-    // loudest (clipped) level, each step below it 0.5 dB quieter, 0 silent.
+    // loudest level, each step below it 0.5 dB quieter, 0 silent.
     float WarbleAmplitude(uint8_t volume)
     {
         if (volume == 0)
@@ -263,7 +267,8 @@ namespace
                     phase += 2.0f * static_cast<float>(M_PI) * (high ? kWarbleHighHz : kWarbleLowHz) / kSpeakerSampleRate;
                     if (phase > 2.0f * static_cast<float>(M_PI))
                         phase -= 2.0f * static_cast<float>(M_PI);
-                    sample = static_cast<int16_t>(amplitude * sinf(phase));
+                    const float clipped = std::clamp(kWarbleDrive * sinf(phase), -1.0f, 1.0f);
+                    sample = static_cast<int16_t>(amplitude * clipped);
                 }
                 else
                 {
