@@ -49,6 +49,18 @@ size_t SoundAnalyzerBase::SampleI2S_Modern()
     size_t bytesToRead = MAX_SAMPLES * kChannels * sizeof(int32_t);
     size_t bytesRead = 0;
 
+#if USE_AUDIO_CODEC
+    // The speaker borrows this channel's clock pins while a warble plays
+    // (see PlayAlertWarble()); stay off the channel until it hands them back.
+    if (_speakerWantsI2S.load())
+    {
+        _samplerParked.store(true);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        return 0;
+    }
+    _samplerParked.store(false);
+#endif
+
     esp_err_t err = i2s_channel_read(_rx_handle, (void *)tempBuffer, bytesToRead, &bytesRead, 100 / portTICK_PERIOD_MS);
     if (err != ESP_OK)
         return 0;

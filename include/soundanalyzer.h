@@ -39,6 +39,7 @@
 #include <Arduino.h>
 #include <arduinoFFT.h>
 #include <array>
+#include <atomic>
 #include <memory>
 #include <mutex>
 
@@ -435,6 +436,17 @@ class SoundAnalyzerBase : public ISoundAnalyzer
 
     bool IsHardwareInstalled() const { return _hardwareInstalled; }
 
+#if USE_AUDIO_CODEC && IS_IDF5
+    // Plays the Mitel warble ring (see PlayMitelWarble() in
+    // soundanalyzer_input_init.cpp) through the codec's speaker for
+    // `durationMs`, pausing mic capture for the duration since the speaker
+    // borrows its I2S clock pins. Blocks until done, so call it from its own
+    // task. Returns false without playing if a warble is already playing or
+    // the speaker isn't available.
+    bool PlayAlertWarble(uint32_t durationMs);
+    bool IsSpeakerBusy() const { return _speakerBusy.load(); }
+#endif
+
     void RunSamplerPass() override;
     void SimulateBeatPass() override;
     void SetPeakDecayRates(float r1, float r2) override;
@@ -666,6 +678,13 @@ class SoundAnalyzerBase : public ISoundAnalyzer
 #if IS_IDF5
     i2s_chan_handle_t _rx_handle = nullptr;
     adc_continuous_handle_t _adc_handle = nullptr;
+#endif
+
+#if USE_AUDIO_CODEC && IS_IDF5
+    bool _speakerAvailable = false;              // ES8311 came up at boot
+    std::atomic<bool> _speakerBusy{false};       // A warble is playing
+    std::atomic<bool> _speakerWantsI2S{false};   // Asks the sampler to stop reading
+    std::atomic<bool> _samplerParked{false};     // The sampler has stopped reading
 #endif
 
     // Tracked per-instance so AudioService::Stop can call TeardownAudioInput

@@ -207,28 +207,73 @@ namespace
         static constexpr uint8_t kI2cAddr = 0x18;
     };
 
-    // Plays a brief tone through the speaker to confirm the codec, amp-enable
-    // GPIO, and wiring all work, using a transient I2S TX channel that's torn
-    // down immediately after - InitI2S_Modern() then claims the persistent RX
-    // channel for ongoing mic capture. Best-effort: logs and returns on any
-    // failure rather than blocking audio bring-up over a speaker fault.
-    void PlaySpeakerSelfTestTone()
-    {
-        constexpr uint32_t kSampleRate = 48000;
-        constexpr uint32_t kToneHz = 440;
-        constexpr uint32_t kDurationMs = 300;
-        constexpr size_t kCycleSamples = kSampleRate / kToneHz;
+    // The classic Mitel electronic warble ringer: a tone that snaps (no
+    // glide) between 530 Hz and 750 Hz at an 11 Hz alternation rate, rung in
+    // the North American PBX cadence of 1 s on, 3 s off. Phase-continuous
+    // across the frequency switches so it trills cleanly instead of clicking.
 
+    constexpr uint32_t kSpeakerSampleRate = 48000;
+    constexpr float kWarbleLowHz = 530.0f;
+    constexpr float kWarbleHighHz = 750.0f;
+    constexpr float kWarbleAlternationHz = 11.0f;
+    constexpr uint32_t kRingOnMs = 1000;
+    constexpr uint32_t kRingCycleMs = 4000;
+    constexpr float kWarbleAmplitude = 8000.0f;
+
+    // Writes `durationMs` of warble (in ring cadence, silence included) to an
+    // enabled 16-bit stereo TX channel at kSpeakerSampleRate.
+    void WriteMitelWarble(i2s_chan_handle_t txHandle, uint32_t durationMs)
+    {
+        constexpr size_t kChunkFrames = kSpeakerSampleRate / 100; // 10 ms
+        int16_t chunk[kChunkFrames * 2];
+        float phase = 0.0f;
+        const uint64_t totalFrames = static_cast<uint64_t>(kSpeakerSampleRate) * durationMs / 1000;
+
+        for (uint64_t frame = 0; frame < totalFrames; frame += kChunkFrames)
+        {
+            for (size_t i = 0; i < kChunkFrames; ++i)
+            {
+                const uint64_t n = frame + i;
+                const uint32_t ms = static_cast<uint32_t>(n * 1000 / kSpeakerSampleRate);
+                int16_t sample = 0;
+                if (n < totalFrames && ms % kRingCycleMs < kRingOnMs)
+                {
+                    // Two tone switches per modulation cycle.
+                    const bool high = static_cast<uint32_t>(n * kWarbleAlternationHz * 2 / kSpeakerSampleRate) % 2;
+                    phase += 2.0f * static_cast<float>(M_PI) * (high ? kWarbleHighHz : kWarbleLowHz) / kSpeakerSampleRate;
+                    if (phase > 2.0f * static_cast<float>(M_PI))
+                        phase -= 2.0f * static_cast<float>(M_PI);
+                    sample = static_cast<int16_t>(kWarbleAmplitude * sinf(phase));
+                }
+                else
+                {
+                    phase = 0.0f; // start each ring burst cleanly
+                }
+                chunk[2 * i] = sample;
+                chunk[2 * i + 1] = sample;
+            }
+            size_t bytesWritten = 0;
+            i2s_channel_write(txHandle, chunk, sizeof(chunk), &bytesWritten, pdMS_TO_TICKS(100));
+        }
+    }
+
+    // Plays the warble on a transient I2S TX channel driving the codec's
+    // clock pins and speaker data pin, torn down afterwards. `port` picks the
+    // I2S controller (I2S_NUM_AUTO at boot, before mic capture claims one).
+    // Best-effort: logs and returns false on any failure.
+    bool PlayMitelWarble(i2s_port_t port, uint32_t durationMs)
+    {
         i2s_chan_handle_t txHandle = nullptr;
-        i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+        i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(port, I2S_ROLE_MASTER);
+        chanCfg.auto_clear = true; // underruns play silence, not stale samples
         if (i2s_new_channel(&chanCfg, &txHandle, nullptr) != ESP_OK)
         {
-            debugW("Audio: speaker self-test skipped, could not allocate I2S TX channel");
-            return;
+            debugW("Audio: warble skipped, could not allocate I2S TX channel");
+            return false;
         }
 
         i2s_std_config_t stdCfg = {
-            .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kSampleRate),
+            .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kSpeakerSampleRate),
             .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
             .gpio_cfg = {
                 .mclk = static_cast<gpio_num_t>(I2S_MCLK_PIN),
@@ -241,28 +286,16 @@ namespace
 
         if (i2s_channel_init_std_mode(txHandle, &stdCfg) != ESP_OK || i2s_channel_enable(txHandle) != ESP_OK)
         {
-            debugW("Audio: speaker self-test skipped, could not start I2S TX channel");
+            debugW("Audio: warble skipped, could not start I2S TX channel");
             i2s_del_channel(txHandle);
-            return;
+            return false;
         }
 
-        int16_t cycle[kCycleSamples * 2];
-        for (size_t i = 0; i < kCycleSamples; ++i)
-        {
-            const auto sample = static_cast<int16_t>(8000.0f * sinf(2.0f * static_cast<float>(M_PI) * i / kCycleSamples));
-            cycle[2 * i]     = sample;
-            cycle[2 * i + 1] = sample;
-        }
-
-        const uint32_t cyclesNeeded = (kSampleRate * kDurationMs / 1000) / kCycleSamples;
-        for (uint32_t c = 0; c < cyclesNeeded; ++c)
-        {
-            size_t bytesWritten = 0;
-            i2s_channel_write(txHandle, cycle, sizeof(cycle), &bytesWritten, pdMS_TO_TICKS(100));
-        }
+        WriteMitelWarble(txHandle, durationMs);
 
         i2s_channel_disable(txHandle);
         i2s_del_channel(txHandle);
+        return true;
     }
 #endif // USE_AUDIO_CODEC
 }
@@ -305,12 +338,61 @@ void SoundAnalyzerBase::InitAudioCodec()
     }
     else
     {
-        debugI("Audio: ES8311 speaker codec initialized, playing self-test tone");
+        // One ring burst confirms the codec, amp-enable GPIO and wiring work.
+        debugI("Audio: ES8311 speaker codec initialized, playing warble self-test");
         digitalWrite(AUDIO_CODEC_PA_ENABLE_PIN, HIGH);
-        PlaySpeakerSelfTestTone();
+        _speakerAvailable = PlayMitelWarble(I2S_NUM_AUTO, kRingOnMs);
     }
 #endif
 }
+
+#if USE_AUDIO_CODEC && IS_IDF5
+bool SoundAnalyzerBase::PlayAlertWarble(uint32_t durationMs)
+{
+    if (!_speakerAvailable || _speakerBusy.exchange(true))
+        return false;
+
+    // Mic capture shares the speaker's MCLK/BCLK/WS pins, so it has to stand
+    // down: ask the sampler to stop reading, wait (briefly) until it has,
+    // then disable the RX channel and play on the other I2S controller.
+    i2s_chan_handle_t rx = _rx_handle;
+    i2s_port_t txPort = I2S_NUM_AUTO;
+    if (rx)
+    {
+        _speakerWantsI2S.store(true);
+        for (int waited = 0; waited < 500 && !_samplerParked.load(); waited += 10)
+            vTaskDelay(pdMS_TO_TICKS(10));
+        i2s_chan_info_t info = {};
+        if (i2s_channel_get_info(rx, &info) == ESP_OK)
+            txPort = info.id == I2S_NUM_0 ? I2S_NUM_1 : I2S_NUM_0;
+        i2s_channel_disable(rx);
+    }
+
+    debugI("Audio: playing alert warble for %lu ms", static_cast<unsigned long>(durationMs));
+    const bool played = PlayMitelWarble(txPort, durationMs);
+
+    if (rx)
+    {
+        // The TX channel took over the shared pins in the GPIO matrix; route
+        // them back to the mic's channel before re-enabling it.
+        i2s_std_gpio_config_t gpioCfg = {
+            .mclk = static_cast<gpio_num_t>(I2S_MCLK_PIN),
+            .bclk = static_cast<gpio_num_t>(I2S_BCLK_PIN),
+            .ws = static_cast<gpio_num_t>(I2S_WS_PIN),
+            .dout = I2S_GPIO_UNUSED,
+            .din = static_cast<gpio_num_t>(GetConfiguredAudioInputPin()),
+        };
+        if (i2s_channel_reconfig_std_gpio(rx, &gpioCfg) != ESP_OK)
+            debugW("Audio: could not restore mic I2S pins after warble");
+        if (i2s_channel_enable(rx) != ESP_OK)
+            debugW("Audio: could not re-enable mic capture after warble");
+        _speakerWantsI2S.store(false);
+    }
+
+    _speakerBusy.store(false);
+    return played;
+}
+#endif
 
 void SoundAnalyzerBase::InitI2S_Modern()
 {
