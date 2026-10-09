@@ -256,6 +256,15 @@ void HUB75GFX::PrepareFrame()
     }
 }
 
+namespace
+{
+    // Set per frame by PostProcessFrame(), read by FlushFrameToMatrix().
+    bool s_captionAllowed = false;
+    // Flushes left that must repaint the caption's band of rows (see
+    // FlushFrameToMatrix()).
+    uint8_t s_captionBandRepaints = 0;
+}
+
 void HUB75GFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDrawn)
 {
     if (localPixelsDrawn + wifiPixelsDrawn == 0)
@@ -264,9 +273,14 @@ void HUB75GFX::PostProcessFrame(uint16_t localPixelsDrawn, uint16_t wifiPixelsDr
     auto& pMatrix = static_cast<HUB75GFX&>(g_ptrSystem->GetEffectManager().g());
 
     const auto& effectManager = g_ptrSystem->GetEffectManager();
-    const bool showCaption = effectManager.HasCurrentEffect() &&
+    // The caption names the local effect, so it doesn't belong over frames
+    // streamed in over WiFi (e.g. from LED-Central), which replace that
+    // effect's output entirely.
+    const bool showCaption = wifiPixelsDrawn == 0 &&
+                             effectManager.HasCurrentEffect() &&
                              effectManager.GetCurrentEffect().ShouldShowTitle() &&
                              pMatrix.GetCaptionTransparency() > 0.0f;
+    s_captionAllowed = showCaption;
 
     constexpr auto kCaptionPower = 500;
     g_Values.MatrixPowerMilliwatts = pMatrix.EstimatePowerDraw();
@@ -319,6 +333,17 @@ void HUB75GFX::FlushFrameToMatrix()
     if (!matrix)
         return;
 
+    // The caption is drawn straight onto the panel, outside the frame
+    // buffers, so the unchanged-pixel skip below would leave whatever it
+    // last drew in place once it stops (or moves, when it scrolls). After a
+    // caption is drawn, its band of rows is repainted from the frame buffer
+    // for the next two flushes - two so both DMA buffers get cleaned when
+    // the panel is double-buffered.
+    constexpr int kCaptionBandTop = std::max(0, MATRIX_HEIGHT - 9);
+    const bool repaintCaptionBand = s_captionBandRepaints > 0;
+    if (repaintCaptionBand)
+        s_captionBandRepaints--;
+
     // drawBufferIndex is still the about-to-be-presented buffer here (the
     // ^1 one flips after this call returns, in MatrixSwapBuffers), so its
     // opposite is whatever is currently actually lit on the panel.
@@ -337,19 +362,17 @@ void HUB75GFX::FlushFrameToMatrix()
             // bit-plane write for the untouched majority. Measured at
             // ~13.9ms/frame (of a ~31ms frame budget) on a 128x64 two-panel
             // Waveshare board before this change.
-            if (pixel == displayed[index])
+            if (pixel == displayed[index] && !(repaintCaptionBand && y >= kCaptionBandTop))
                 continue;
             matrix->drawPixelRGB888(x, y, pixel.r, pixel.g, pixel.b);
         }
     }
 
     auto& gfx = static_cast<HUB75GFX&>(g_ptrSystem->GetEffectManager().g());
-    const auto& effectManager = g_ptrSystem->GetEffectManager();
-    const bool shouldShowTitle = effectManager.HasCurrentEffect() &&
-                                 effectManager.GetCurrentEffect().ShouldShowTitle();
-    const float captionAlpha = shouldShowTitle ? gfx.GetCaptionTransparency() : 0.0f;
+    const float captionAlpha = s_captionAllowed ? gfx.GetCaptionTransparency() : 0.0f;
     if (captionAlpha > 0.0f)
     {
+        s_captionBandRepaints = 2;
         const String caption = gfx.GetCaption();
         constexpr int charWidth = 6;
         constexpr int charHeight = 8;
