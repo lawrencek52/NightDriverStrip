@@ -225,10 +225,10 @@ namespace
     // Sample level at volume 100, just under full scale.
     constexpr float kWarbleMaxAmplitude = 30000.0f;
     // The original Mitel ringer was deliberately distorted. The waveform is a
-    // sine overdriven by this factor and clipped flat - the sound the DAC
-    // made at volume 86 when it was set 10 dB hot - then scaled to volume,
-    // so the distortion is the same at every level.
-    constexpr float kWarbleDrive = 1.29f;
+    // sine overdriven by this factor and clipped flat, then scaled to volume,
+    // so the distortion is the same at every level. At 10x it clips at a
+    // tenth of its peak: very nearly a square wave, with short sloped edges.
+    constexpr float kWarbleDrive = 10.0f;
     // The boot ring's volume - the level the original self-test tone played
     // at (about 19 dB below the maximum).
     constexpr uint8_t kBootWarbleVolume = 62;
