@@ -175,10 +175,11 @@ namespace
             ok &= WriteReg(0x1C, 0x6A);
             ok &= WriteReg(0x37, 0x08);
 
-            // DAC at 0 dB (0xBF): the warble's own sample level sets the volume
-            // (see WarbleAmplitude()), and anything above 0 dB would clip a
-            // full-scale tone.
-            ok &= WriteReg(0x32, 0xBF);
+            // DAC at +10 dB (0xD3; 0xBF is 0 dB, 0.5 dB per step). The warble's
+            // own sample level sets the volume (see WarbleAmplitude()); at the
+            // top of the range this deliberately clips, for the hard,
+            // distorted sound of the original Mitel ringer.
+            ok &= WriteReg(0x32, 0xD3);
             return ok;
         }
 
@@ -221,19 +222,20 @@ namespace
     constexpr float kWarbleAlternationHz = 11.0f;
     constexpr uint32_t kRingOnMs = 1000;
     constexpr uint32_t kRingCycleMs = 4000;
-    // Loudest clean sample level, just under full scale.
+    // Sample level at volume 100, just under full scale; with the DAC at
+    // +10 dB (see ES8311Codec::begin()) the top of the range clips.
     constexpr float kWarbleMaxAmplitude = 30000.0f;
     // The boot ring's volume - the level the original self-test tone played
-    // at (about 19 dB below the maximum).
-    constexpr uint8_t kBootWarbleVolume = 53;
+    // at (about 29 dB below the maximum).
+    constexpr uint8_t kBootWarbleVolume = 42;
 
     // Sample amplitude for a 0-100 volume on a decibel scale: 100 is the
-    // loudest clean level, each step below it 0.4 dB quieter, 0 silent.
+    // loudest (clipped) level, each step below it 0.5 dB quieter, 0 silent.
     float WarbleAmplitude(uint8_t volume)
     {
         if (volume == 0)
             return 0.0f;
-        const float decibels = (std::min<int>(volume, 100) - 100) * 0.4f;
+        const float decibels = (std::min<int>(volume, 100) - 100) * 0.5f;
         return kWarbleMaxAmplitude * powf(10.0f, decibels / 20.0f);
     }
 
