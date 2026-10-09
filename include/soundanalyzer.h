@@ -439,11 +439,12 @@ class SoundAnalyzerBase : public ISoundAnalyzer
 #if USE_AUDIO_CODEC && IS_IDF5
     // Plays the Mitel warble ring (see PlayMitelWarble() in
     // soundanalyzer_input_init.cpp) through the codec's speaker for
-    // `durationMs`, pausing mic capture for the duration since the speaker
-    // borrows its I2S clock pins. Blocks until done, so call it from its own
-    // task. Returns false without playing if a warble is already playing or
-    // the speaker isn't available.
-    bool PlayAlertWarble(uint32_t durationMs);
+    // `durationMs` at `volume` (0-100, decibel scale, 100 = loudest clean
+    // level), pausing mic capture for the duration since the speaker borrows
+    // its I2S clock pins. Blocks until done, so call it from its own task.
+    // Returns false without playing if a warble is already playing or the
+    // speaker isn't available.
+    bool PlayAlertWarble(uint32_t durationMs, uint8_t volume = 100);
     bool IsSpeakerBusy() const { return _speakerBusy.load(); }
 #endif
 

@@ -218,17 +218,22 @@ void CWebServer::begin()
 
     #if USE_AUDIO_CODEC && IS_IDF5
         // Rings the Mitel warble on the speaker (e.g. for a weather alert from
-        // LED-Central). seconds defaults to 12 and is clamped to 1-60. Plays
-        // on its own task, so this returns as soon as it has started: 202, or
-        // 409 if a warble is already playing.
+        // LED-Central). seconds defaults to 12 (clamped to 1-60) and volume to
+        // 100 (0-100, see WarbleAmplitude()). Plays on its own task, so this
+        // returns as soon as it has started: 202, or 409 if a warble is
+        // already playing.
         _server.on("/speaker/warble",    HTTP_POST, [](AsyncWebServerRequest* pRequest)
         {
-            long seconds = 12;
-            if (pRequest->hasParam("seconds", true))
-                seconds = pRequest->getParam("seconds", true)->value().toInt();
-            else if (pRequest->hasParam("seconds"))
-                seconds = pRequest->getParam("seconds")->value().toInt();
-            const uint32_t durationMs = static_cast<uint32_t>(std::clamp(seconds, 1L, 60L)) * 1000;
+            const auto numberParam = [pRequest](const char* name, long fallback)
+            {
+                if (pRequest->hasParam(name, true))
+                    return pRequest->getParam(name, true)->value().toInt();
+                if (pRequest->hasParam(name))
+                    return pRequest->getParam(name)->value().toInt();
+                return fallback;
+            };
+            const uint32_t durationMs = static_cast<uint32_t>(std::clamp(numberParam("seconds", 12), 1L, 60L)) * 1000;
+            const uint32_t volume = static_cast<uint32_t>(std::clamp(numberParam("volume", 100), 0L, 100L));
 
             if (g_Analyzer.IsSpeakerBusy())
             {
@@ -238,10 +243,12 @@ void CWebServer::begin()
             const BaseType_t created = xTaskCreate(
                 [](void* arg)
                 {
-                    g_Analyzer.PlayAlertWarble(reinterpret_cast<uintptr_t>(arg));
+                    // Duration (<= 60000 ms) and volume packed into the task argument.
+                    const auto packed = reinterpret_cast<uintptr_t>(arg);
+                    g_Analyzer.PlayAlertWarble(packed >> 8, packed & 0xFF);
                     vTaskDelete(nullptr);
                 },
-                "Warble", 4096, reinterpret_cast<void*>(static_cast<uintptr_t>(durationMs)), 1, nullptr);
+                "Warble", 4096, reinterpret_cast<void*>(static_cast<uintptr_t>((durationMs << 8) | volume)), 1, nullptr);
             pRequest->send(created == pdPASS ? 202 : 503, "text/plain", created == pdPASS ? "Playing" : "Could not start");
         });
     #endif

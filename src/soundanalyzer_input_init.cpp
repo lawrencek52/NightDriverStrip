@@ -175,7 +175,10 @@ namespace
             ok &= WriteReg(0x1C, 0x6A);
             ok &= WriteReg(0x37, 0x08);
 
-            ok &= setVolume(70);
+            // DAC at 0 dB (0xBF): the warble's own sample level sets the volume
+            // (see WarbleAmplitude()), and anything above 0 dB would clip a
+            // full-scale tone.
+            ok &= WriteReg(0x32, 0xBF);
             return ok;
         }
 
@@ -218,12 +221,27 @@ namespace
     constexpr float kWarbleAlternationHz = 11.0f;
     constexpr uint32_t kRingOnMs = 1000;
     constexpr uint32_t kRingCycleMs = 4000;
-    constexpr float kWarbleAmplitude = 8000.0f;
+    // Loudest clean sample level, just under full scale.
+    constexpr float kWarbleMaxAmplitude = 30000.0f;
+    // The boot ring's volume - the level the original self-test tone played
+    // at (about 19 dB below the maximum).
+    constexpr uint8_t kBootWarbleVolume = 53;
+
+    // Sample amplitude for a 0-100 volume on a decibel scale: 100 is the
+    // loudest clean level, each step below it 0.4 dB quieter, 0 silent.
+    float WarbleAmplitude(uint8_t volume)
+    {
+        if (volume == 0)
+            return 0.0f;
+        const float decibels = (std::min<int>(volume, 100) - 100) * 0.4f;
+        return kWarbleMaxAmplitude * powf(10.0f, decibels / 20.0f);
+    }
 
     // Writes `durationMs` of warble (in ring cadence, silence included) to an
     // enabled 16-bit stereo TX channel at kSpeakerSampleRate.
-    void WriteMitelWarble(i2s_chan_handle_t txHandle, uint32_t durationMs)
+    void WriteMitelWarble(i2s_chan_handle_t txHandle, uint32_t durationMs, uint8_t volume)
     {
+        const float amplitude = WarbleAmplitude(volume);
         constexpr size_t kChunkFrames = kSpeakerSampleRate / 100; // 10 ms
         int16_t chunk[kChunkFrames * 2];
         float phase = 0.0f;
@@ -243,7 +261,7 @@ namespace
                     phase += 2.0f * static_cast<float>(M_PI) * (high ? kWarbleHighHz : kWarbleLowHz) / kSpeakerSampleRate;
                     if (phase > 2.0f * static_cast<float>(M_PI))
                         phase -= 2.0f * static_cast<float>(M_PI);
-                    sample = static_cast<int16_t>(kWarbleAmplitude * sinf(phase));
+                    sample = static_cast<int16_t>(amplitude * sinf(phase));
                 }
                 else
                 {
@@ -261,7 +279,7 @@ namespace
     // clock pins and speaker data pin, torn down afterwards. `port` picks the
     // I2S controller (I2S_NUM_AUTO at boot, before mic capture claims one).
     // Best-effort: logs and returns false on any failure.
-    bool PlayMitelWarble(i2s_port_t port, uint32_t durationMs)
+    bool PlayMitelWarble(i2s_port_t port, uint32_t durationMs, uint8_t volume)
     {
         i2s_chan_handle_t txHandle = nullptr;
         i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(port, I2S_ROLE_MASTER);
@@ -291,7 +309,7 @@ namespace
             return false;
         }
 
-        WriteMitelWarble(txHandle, durationMs);
+        WriteMitelWarble(txHandle, durationMs, volume);
 
         i2s_channel_disable(txHandle);
         i2s_del_channel(txHandle);
@@ -341,13 +359,13 @@ void SoundAnalyzerBase::InitAudioCodec()
         // One ring burst confirms the codec, amp-enable GPIO and wiring work.
         debugI("Audio: ES8311 speaker codec initialized, playing warble self-test");
         digitalWrite(AUDIO_CODEC_PA_ENABLE_PIN, HIGH);
-        _speakerAvailable = PlayMitelWarble(I2S_NUM_AUTO, kRingOnMs);
+        _speakerAvailable = PlayMitelWarble(I2S_NUM_AUTO, kRingOnMs, kBootWarbleVolume);
     }
 #endif
 }
 
 #if USE_AUDIO_CODEC && IS_IDF5
-bool SoundAnalyzerBase::PlayAlertWarble(uint32_t durationMs)
+bool SoundAnalyzerBase::PlayAlertWarble(uint32_t durationMs, uint8_t volume)
 {
     if (!_speakerAvailable || _speakerBusy.exchange(true))
         return false;
@@ -368,8 +386,8 @@ bool SoundAnalyzerBase::PlayAlertWarble(uint32_t durationMs)
         i2s_channel_disable(rx);
     }
 
-    debugI("Audio: playing alert warble for %lu ms", static_cast<unsigned long>(durationMs));
-    const bool played = PlayMitelWarble(txPort, durationMs);
+    debugI("Audio: playing alert warble for %lu ms at volume %u", static_cast<unsigned long>(durationMs), volume);
+    const bool played = PlayMitelWarble(txPort, durationMs, volume);
 
     if (rx)
     {
