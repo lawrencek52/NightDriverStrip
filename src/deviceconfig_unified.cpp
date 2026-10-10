@@ -739,7 +739,8 @@ SuccessResultWithMessage DeviceConfig::ApplyUnifiedDeviceSettings(const UnifiedS
     // auto mode is on and something that could change the result was just touched - not on
     // every settings save, since each attempt is a blocking HTTP call.
     const bool scheduleLocationInputsChanged = request.location.has_value() || request.locationIsZip.has_value() ||
-                                                request.countryCode.has_value() || request.scheduleLatLongAuto.has_value();
+                                                request.countryCode.has_value() || request.openWeatherApiKey.has_value() ||
+                                                request.scheduleLatLongAuto.has_value();
     if (scheduleLatLongAuto && scheduleLocationInputsChanged)
         ResolveScheduleLatLongFromLocation();
 

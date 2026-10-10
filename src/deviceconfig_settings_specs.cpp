@@ -105,7 +105,8 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name         = ScheduleLatLongAutoTag,
             .FriendlyName = "Auto-detect from location",
-            .Description  = "Automatically resolve latitude/longitude from the Location/Country code settings above (needs an Open Weather API key). "
+            .Description  = "Automatically resolve latitude/longitude from the Location/Country code settings above. A postal code needs no API key; "
+                            "a city name needs an Open Weather API key. "
                             "Turn this off to enter latitude/longitude manually below.",
             .Type         = SettingSpec::SettingType::Boolean,
             .Section      = kSectionLocation,

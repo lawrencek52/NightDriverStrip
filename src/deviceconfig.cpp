@@ -39,6 +39,7 @@
 #include <memory>
 #include <optional>
 #include <UrlEncode.h>
+#include <vector>
 
 #include "audioservice.h"
 #include "deviceconfig.h"
@@ -1152,37 +1153,79 @@ SuccessResultWithMessage DeviceConfig::ValidateOpenWeatherAPIKey(const String &n
     }
 }
 
-// ResolveScheduleLatLongFromLocation
+// LookupPostalCodeViaZippopotam
 //
-// Mirrors PatternWeather::updateCoordinates() - same OpenWeatherMap geocoding endpoints,
-// same request shape - but writes the result into the schedule's lat/long instead of an
-// effect-local cache. Best-effort: any failure (no key, no network, bad location) just
-// leaves the existing scheduleLatitude/scheduleLongitude in place.
-bool DeviceConfig::ResolveScheduleLatLongFromLocation()
+// Keyless postal code lookup via zippopotam.us (plain HTTP, ~60 countries). Its Canadian and
+// UK data only covers the outward/prefix part of a postal code ("K2L", "SW1A"), so a full code
+// it doesn't know is retried with just that prefix - which is still far more precise than the
+// schedule needs, since 1 km of longitude moves sunrise by only a few seconds.
+static bool LookupPostalCodeViaZippopotam(const String& postalCode, const String& countryCode, float& latitude, float& longitude, String& matchedCode)
 {
-    if (location.isEmpty() || openWeatherApiKey.isEmpty())
+    String fullCode = postalCode;
+    fullCode.trim();
+    fullCode.toUpperCase();
+
+    std::vector<String> candidates{ fullCode };
+    const int space = fullCode.indexOf(' ');
+    if (space > 0)
+        candidates.push_back(fullCode.substring(0, space));
+    else if (countryCode.equalsIgnoreCase("CA") && fullCode.length() > 3)
+        candidates.push_back(fullCode.substring(0, 3));
+    else if (countryCode.equalsIgnoreCase("GB") && fullCode.length() > 4)
+        candidates.push_back(fullCode.substring(0, fullCode.length() - 3));
+
+    for (const auto& candidate : candidates)
     {
-        scheduleLatLongStatus = "Not attempted: set a location and an Open Weather API key first.";
-        return false;
+        HTTPClient http;
+        http.begin("http://api.zippopotam.us/" + urlEncode(countryCode) + "/" + urlEncode(candidate));
+        const int httpResponseCode = http.GET();
+        if (httpResponseCode != HTTP_CODE_OK)
+        {
+            debugV("LookupPostalCodeViaZippopotam: '%s' returned HTTP %d", candidate.c_str(), httpResponseCode);
+            http.end();
+            continue;
+        }
+
+        auto doc = CreateJsonDocument();
+        deserializeJson(doc, http.getString());
+        http.end();
+
+        // Coordinates come back as strings, e.g. "latitude": "45.3125"
+        JsonObject place = doc["places"][0].as<JsonObject>();
+        if (!place["latitude"].is<const char*>() || !place["longitude"].is<const char*>())
+            continue;
+
+        latitude = String(place["latitude"].as<const char*>()).toFloat();
+        longitude = String(place["longitude"].as<const char*>()).toFloat();
+        matchedCode = candidate;
+        return true;
     }
 
+    return false;
+}
+
+// LookupLocationViaOpenWeather
+//
+// Mirrors PatternWeather::updateCoordinates() - same OpenWeatherMap geocoding endpoints,
+// same request shape. Handles both postal codes and city names, but needs an API key.
+static bool LookupLocationViaOpenWeather(const String& location, bool locationIsZip, const String& countryCode, const String& apiKey, float& latitude, float& longitude, String& failureMessage)
+{
     HTTPClient http;
     String url;
     if (locationIsZip)
         url = "http://api.openweathermap.org/geo/1.0/zip"
-            "?zip=" + urlEncode(location) + "," + urlEncode(countryCode) + "&appid=" + urlEncode(openWeatherApiKey);
+            "?zip=" + urlEncode(location) + "," + urlEncode(countryCode) + "&appid=" + urlEncode(apiKey);
     else
         url = "http://api.openweathermap.org/geo/1.0/direct"
-            "?q=" + urlEncode(location) + "," + urlEncode(countryCode) + "&limit=1&appid=" + urlEncode(openWeatherApiKey);
+            "?q=" + urlEncode(location) + "," + urlEncode(countryCode) + "&limit=1&appid=" + urlEncode(apiKey);
 
     http.begin(url);
     const int httpResponseCode = http.GET();
     if (httpResponseCode != HTTP_CODE_OK)
     {
-        debugW("ResolveScheduleLatLongFromLocation: geocoding request for '%s' failed (HTTP %d)", location.c_str(), httpResponseCode);
+        debugW("LookupLocationViaOpenWeather: geocoding request for '%s' failed (HTTP %d)", location.c_str(), httpResponseCode);
         http.end();
-        scheduleLatLongStatus = String("Failed: geocoding request returned HTTP ") + httpResponseCode
-            + ". Check the API key and, for a postal code, that it's formatted the way Open Weather expects.";
+        failureMessage = String("Failed: Open Weather geocoding request returned HTTP ") + httpResponseCode + ". Check the API key.";
         return false;
     }
 
@@ -1193,22 +1236,66 @@ bool DeviceConfig::ResolveScheduleLatLongFromLocation()
 
     if (!coordinates["lat"].is<float>() || !coordinates["lon"].is<float>())
     {
-        debugW("ResolveScheduleLatLongFromLocation: no coordinates found for '%s'", location.c_str());
-        // Open Weather's zip geocoding is only reliable with the outward/prefix portion of
-        // alphanumeric postal codes (e.g. UK, Canada) - a full 6-character Canadian postal
-        // code commonly returns no match where the 3-character FSA (e.g. "K1A") does.
-        if (locationIsZip && countryCode == "CA" && location.length() > 3)
-            scheduleLatLongStatus = "Failed: no coordinates found for '" + location
-                + "'. Open Weather's postal code lookup for Canada usually only works with the "
-                + "3-character forward sortation area (e.g. \"K1A\" instead of \"K1A 0A6\") - try that.";
-        else
-            scheduleLatLongStatus = "Failed: no coordinates found for '" + location + "'.";
+        debugW("LookupLocationViaOpenWeather: no coordinates found for '%s'", location.c_str());
+        failureMessage = "Failed: no coordinates found for '" + location + "'.";
         return false;
     }
 
-    SetScheduleLatitude(coordinates["lat"].as<float>());
-    SetScheduleLongitude(coordinates["lon"].as<float>());
-    scheduleLatLongStatus = "OK: resolved '" + location + "' to " + String(GetScheduleLatitude(), 4)
+    latitude = coordinates["lat"].as<float>();
+    longitude = coordinates["lon"].as<float>();
+    return true;
+}
+
+// ResolveScheduleLatLongFromLocation
+//
+// Writes the result into the schedule's lat/long. Postal codes are looked up keyless via
+// zippopotam.us first, falling back to Open Weather's geocoder when an API key is set (which
+// is also the only route for a city name). Best-effort: any failure (no network, bad location,
+// city name without a key) just leaves the existing scheduleLatitude/scheduleLongitude in place.
+bool DeviceConfig::ResolveScheduleLatLongFromLocation()
+{
+    if (location.isEmpty())
+    {
+        scheduleLatLongStatus = "Not attempted: set a location first.";
+        return false;
+    }
+
+    float latitude = 0.0f;
+    float longitude = 0.0f;
+    String source;
+    String failureMessage;
+
+    String matchedCode;
+    if (locationIsZip && !countryCode.isEmpty()
+        && LookupPostalCodeViaZippopotam(location, countryCode, latitude, longitude, matchedCode))
+    {
+        source = "'" + matchedCode + "' via zippopotam.us";
+    }
+    else if (!openWeatherApiKey.isEmpty())
+    {
+        if (LookupLocationViaOpenWeather(location, locationIsZip, countryCode, openWeatherApiKey, latitude, longitude, failureMessage))
+            source = "'" + location + "' via Open Weather";
+    }
+    else if (locationIsZip)
+    {
+        failureMessage = "Failed: no coordinates found for postal code '" + location + "' in country '" + countryCode
+            + "'. Check the postal code and country code, or set an Open Weather API key as a fallback.";
+    }
+    else
+    {
+        failureMessage = "Not attempted: looking up a city name needs an Open Weather API key - "
+                         "use a postal code instead, or set a key.";
+    }
+
+    if (source.isEmpty())
+    {
+        scheduleLatLongStatus = failureMessage;
+        return false;
+    }
+
+    SetScheduleLatitude(latitude);
+    SetScheduleLongitude(longitude);
+    scheduleLatLongStatus = "OK: resolved " + source + " to " + String(GetScheduleLatitude(), 4)
         + ", " + String(GetScheduleLongitude(), 4) + ".";
     return true;
 }

@@ -308,15 +308,16 @@ class DeviceConfig : public IJSONSerializable
 
     // Human-readable outcome of the most recent ResolveScheduleLatLongFromLocation() attempt
     // (empty until the first attempt). Persisted so it survives a reboot without needing to
-    // re-poll Open Weather - it's only ever refreshed when SetLocation/SetLocationIsZip/
-    // SetCountryCode/SetScheduleLatLongAuto trigger a fresh resolution, not on every boot.
+    // re-poll a geocoder - it's only ever refreshed when a location, country code, API key or
+    // latLongAuto change triggers a fresh resolution, not on every boot.
     String scheduleLatLongStatus = "";
 
     // Best-effort: resolves scheduleLatitude/scheduleLongitude from location/countryCode
-    // via a blocking HTTP GET, mirroring PatternWeather's updateCoordinates(). Only called
+    // via blocking HTTP GETs - keyless zippopotam.us for postal codes, then Open Weather's
+    // geocoder (same as PatternWeather's updateCoordinates()) if a key is set. Only called
     // from webserver request handlers (see ApplyUnifiedDeviceSettings), which already block
     // on similar calls (e.g. ValidateOpenWeatherAPIKey) - never call this from a render or
-    // audio task. No-ops (returns false) without WiFi, an API key, or a non-empty location.
+    // audio task. No-ops (returns false) without WiFi or a non-empty location.
     bool ResolveScheduleLatLongFromLocation();
 
     // Sunrise/sunset only change meaningfully once a day; cache the computed local
