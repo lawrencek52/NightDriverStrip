@@ -43,6 +43,7 @@
     #include <limits>
     #include <mutex>
     #include <nvs.h>
+    #include <ping/ping_sock.h>
     #include <soc/soc_caps.h>
     #include <WiFi.h>
 #elif ENABLE_ESPNOW
@@ -91,6 +92,16 @@ namespace nd_network
     // WiFi.disconnect.
     static std::atomic<bool> l_ProvisioningActive{false};
     static std::atomic<int> l_LastWiFiDisconnectReason{0};
+
+    // STA_DISCONNECTED events since boot (each failed reconnect attempt counts
+    // too), and the reconnects the stall watchdog below has forced.
+    static std::atomic<uint32_t> l_WiFiDisconnects{0};
+    static std::atomic<uint32_t> l_WiFiStallReconnects{0};
+
+    // millis() of the gateway's last ping reply, and whether it has ever
+    // replied at all - see CheckWiFiStall.
+    static std::atomic<uint32_t> l_LastGatewayReplyMs{0};
+    static std::atomic<bool> l_GatewayEverReplied{false};
 
 #if ENABLE_WIFI
     static DRAM_ATTR WiFiUDP l_Udp;
@@ -244,6 +255,7 @@ namespace nd_network
                 else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP)
                 {
                     l_HasStaIp.store(true);
+                    l_LastGatewayReplyMs.store(millis());   // Fresh stall window for the new connection
                     DisableWiFiPowerSave("GOT_IP");
                     const String &hostname = g_ptrSystem ? g_ptrSystem->GetDeviceConfig().GetHostname() : String();
                     debugI("WiFi GOT_IP: hostname=%s.local ip=%s gateway=%s subnet=%s dns=%s",
@@ -267,6 +279,7 @@ namespace nd_network
                 {
                     l_HasStaIp.store(false);
                     l_LastWiFiDisconnectReason.store(info.wifi_sta_disconnected.reason);
+                    l_WiFiDisconnects++;
                     debugW("WiFi Disconnected. Reason: %d", info.wifi_sta_disconnected.reason);
                 }
             });
@@ -522,12 +535,126 @@ namespace nd_network
 
     uint32_t GetWiFiWatchdogReboots()    { EnsureWiFiWatchdogStateValid(); return l_WiFiWatchdogReboots; }
     int      GetWiFiWatchdogLastReason() { EnsureWiFiWatchdogStateValid(); return l_WiFiWatchdogLastReason; }
+    uint32_t GetWiFiDisconnects()        { return l_WiFiDisconnects.load(); }
+    uint32_t GetWiFiStallReconnects()    { return l_WiFiStallReconnects.load(); }
+
+    int32_t GetGatewayReplyAgeMs()
+    {
+        if (!l_GatewayEverReplied.load()) return -1;
+        return (int32_t)(millis() - l_LastGatewayReplyMs.load());
+    }
+
+    // CheckWiFiStall
+    //
+    // The loss watchdog below only sees a connection the driver reports as
+    // down. Deck3 (2026-10-10/11) twice went 20-26 min passing no traffic at
+    // all - not even unicast ping or ARP - while WiFi.isConnected() stayed
+    // true the whole time, so nothing fired and it sat dark until it recovered
+    // on its own. This pings the gateway every few seconds; when it stops
+    // answering for WIFI_STALL_RECONNECT_MS the association is torn down and
+    // rebuilt (a fresh handshake and group key), and a stall that survives
+    // WIFI_STALL_REBOOT_MS of that reboots the board.
+    //
+    // Only armed once the gateway has replied at least once, so a router that
+    // drops ICMP can't trigger reconnects. 0 disables it.
+
+    #ifndef WIFI_STALL_RECONNECT_MS
+        #define WIFI_STALL_RECONNECT_MS (60 * 1000)
+    #endif
+    #ifndef WIFI_STALL_REBOOT_MS
+        #define WIFI_STALL_REBOOT_MS (5 * 60 * 1000)
+    #endif
+
+    // Recorded as WIFI_WATCHDOG_LAST_REASON when a stall forces a reboot;
+    // outside the range of the driver's wifi_err_reason_t codes.
+    static constexpr int kWiFiStallRebootReason = 1000;
+
+    static void OnGatewayPingSuccess(esp_ping_handle_t, void *)
+    {
+        l_LastGatewayReplyMs.store(millis());
+        l_GatewayEverReplied.store(true);
+    }
+
+    static void CheckWiFiStall()
+    {
+        if (WIFI_STALL_RECONNECT_MS == 0)
+            return;
+
+        static esp_ping_handle_t s_ping = nullptr;
+        static uint32_t s_pingTarget = 0;
+        static unsigned long s_stallStartMs = 0;
+
+        // (Re)start the ping session whenever the gateway changes - including
+        // the first time we have one.
+        const IPAddress gateway = WiFi.gatewayIP();
+        const uint32_t target = (uint32_t)gateway;
+        if (target == 0)
+            return;
+
+        if (s_ping == nullptr || target != s_pingTarget)
+        {
+            if (s_ping != nullptr)
+            {
+                esp_ping_stop(s_ping);
+                esp_ping_delete_session(s_ping);
+                s_ping = nullptr;
+            }
+
+            esp_ping_config_t config = ESP_PING_DEFAULT_CONFIG();
+            IP_ADDR4(&config.target_addr, gateway[0], gateway[1], gateway[2], gateway[3]);
+            config.count       = ESP_PING_COUNT_INFINITE;
+            config.interval_ms = 5000;
+            config.timeout_ms  = 1000;
+
+            esp_ping_callbacks_t callbacks = {};
+            callbacks.on_ping_success = OnGatewayPingSuccess;
+
+            if (esp_ping_new_session(&config, &callbacks, &s_ping) != ESP_OK)
+            {
+                debugW("Could not start the gateway ping for the WiFi stall watchdog");
+                s_ping = nullptr;
+                return;
+            }
+            s_pingTarget = target;
+            l_LastGatewayReplyMs.store(millis());
+            esp_ping_start(s_ping);
+        }
+
+        if (!l_GatewayEverReplied.load() || l_ProvisioningActive.load())
+            return;
+
+        if (millis() - l_LastGatewayReplyMs.load() < WIFI_STALL_RECONNECT_MS)
+        {
+            s_stallStartMs = 0;
+            return;
+        }
+
+        if (s_stallStartMs == 0)
+            s_stallStartMs = millis();
+
+        if (millis() - s_stallStartMs >= WIFI_STALL_REBOOT_MS)
+        {
+            EnsureWiFiWatchdogStateValid();
+            l_WiFiWatchdogReboots++;
+            l_WiFiWatchdogLastReason = kWiFiStallRebootReason;
+            debugE("WiFi connected but gateway silent for %lu s despite reconnects, rebooting",
+                   (unsigned long)(WIFI_STALL_REBOOT_MS / 1000));
+            Serial.flush();
+            delay(100);
+            ESP.restart();
+        }
+
+        l_WiFiStallReconnects++;
+        debugW("WiFi connected but gateway %s silent for %lu s, reconnecting",
+               gateway.toString().c_str(), (unsigned long)(WIFI_STALL_RECONNECT_MS / 1000));
+        // Dropping the association is enough: the network thread's
+        // ConnectToWiFi loop - the one place that calls WiFi.begin - sees the
+        // disconnect and reconnects, and GOT_IP restarts the stall window.
+        WiFi.disconnect();
+    }
 
     void CheckWiFiLossWatchdog()
     {
-        if (WIFI_LOST_REBOOT_MS == 0)
-            return;
-
         static bool s_everConnected = false;
         static unsigned long s_lastConnectedMs = 0;
 
@@ -535,8 +662,12 @@ namespace nd_network
         {
             s_everConnected = true;
             s_lastConnectedMs = millis();
+            CheckWiFiStall();
             return;
         }
+
+        if (WIFI_LOST_REBOOT_MS == 0)
+            return;
 
         // Never connected means bad credentials or no AP in range, which a
         // reboot won't fix; Improv owns WiFi while it's provisioning.
@@ -825,6 +956,9 @@ namespace nd_network
     void     CheckWiFiLossWatchdog()       {}
     uint32_t GetWiFiWatchdogReboots()      { return 0; }
     int      GetWiFiWatchdogLastReason()   { return 0; }
+    uint32_t GetWiFiDisconnects()          { return 0; }
+    uint32_t GetWiFiStallReconnects()      { return 0; }
+    int32_t  GetGatewayReplyAgeMs()        { return -1; }
 
     // The network handling loop is gone in non-WiFi builds; NetworkReader
     // is only declared when ENABLE_WIFI=1 (see nd_network.h).

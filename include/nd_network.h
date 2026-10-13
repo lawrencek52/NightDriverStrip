@@ -105,9 +105,16 @@ namespace nd_network
     // at least once, losing it for WIFI_LOST_REBOOT_MS restarts the board.
     // The reboot count and the disconnect reason that led to the last one
     // survive the software restart (not a power cycle) for /statistics.
+    //
+    // While connected it also runs a stall watchdog: the gateway is pinged
+    // every 5s, and if it stops answering the association is rebuilt, then
+    // the board rebooted if that doesn't help (WIFI_WATCHDOG_LAST_REASON 1000).
     void     CheckWiFiLossWatchdog();
     uint32_t GetWiFiWatchdogReboots();
     int      GetWiFiWatchdogLastReason();
+    uint32_t GetWiFiDisconnects();          // STA_DISCONNECTED events since boot
+    uint32_t GetWiFiStallReconnects();      // Reconnects forced by the stall watchdog since boot
+    int32_t  GetGatewayReplyAgeMs();        // ms since the gateway last answered a ping, -1 if never
 
     // Persistence
     void UpdateNTPTime();

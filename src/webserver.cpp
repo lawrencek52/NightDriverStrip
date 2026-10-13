@@ -450,6 +450,10 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
             j["WIFI_RSSI"]                 = nd_network::GetWiFiRSSI();
             j["WIFI_WATCHDOG_REBOOTS"]     = nd_network::GetWiFiWatchdogReboots();
             j["WIFI_WATCHDOG_LAST_REASON"] = nd_network::GetWiFiWatchdogLastReason();
+            j["WIFI_DISCONNECTS"]          = nd_network::GetWiFiDisconnects();
+            j["WIFI_LAST_DISCONNECT_REASON"] = nd_network::GetLastWiFiDisconnectReason();
+            j["WIFI_STALL_RECONNECTS"]     = nd_network::GetWiFiStallReconnects();
+            j["WIFI_GATEWAY_REPLY_AGE_MS"] = nd_network::GetGatewayReplyAgeMs();
         #endif
 
         #if INCOMING_WIFI_ENABLED
