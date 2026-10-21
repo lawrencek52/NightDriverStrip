@@ -48,7 +48,7 @@ done
 # NOTE: don't call this array GROUPS -- bash reserves that name for the
 # process's numeric group ID list and silently clobbers it.
 OTA_GROUPS=(
-  "xiao_c5|deck1:192.168.86.81 deck2:192.168.86.77"
+  "xiao_c5|deck1:192.168.86.81 deck2:192.168.86.77 garage1:192.168.86.73"
   "xiao_sense|deck3:192.168.86.68 matrix-16x16:192.168.86.74"
   "waveshare_esp32s3_rgb_matrix_128x64|matrix-128x64:192.168.86.37"
   "waveshare_esp32s3_rgb_matrix_64x64|matrix-64x64:192.168.86.79"
