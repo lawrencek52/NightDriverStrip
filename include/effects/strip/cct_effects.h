@@ -94,12 +94,17 @@ public:
         const CRGB rgb = GFXBase::MaximumRgbForKelvin(_kelvin, _brightness);
         const CRGBW white = GFXBase::MaximumWhiteForKelvin(_kelvin, _brightness);
 
+        // Each channel's own LED count, not _cLEDs (channel 0's): with individual strips of
+        // different lengths, filling a shorter channel to channel 0's length ran off the end of
+        // its buffer and corrupted the heap (deck1, 210/210/210/201 LEDs, panicked switching to
+        // this effect).
         for (auto& device : _GFX)
         {
-            fill_solid(device->leds, _cLEDs, rgb);
+            const size_t ledCount = device->GetLEDCount();
+            fill_solid(device->leds, ledCount, rgb);
             if (device->whites)
             {
-                for (size_t i = 0; i < _cLEDs; ++i)
+                for (size_t i = 0; i < ledCount; ++i)
                     device->whites[i] = white;
             }
         }

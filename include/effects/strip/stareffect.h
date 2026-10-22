@@ -605,7 +605,13 @@ class StarEffectBase : public EffectWithId<StarEffectBase<StarType, TEffect>>
         }
         else
         {
-            LEDStripEffect::g().blurRows(LEDStripEffect::g().leds, MATRIX_WIDTH, MATRIX_HEIGHT, 0, _blurFactor * 255);
+            // Each channel blurred at its own size. This used the compiled MATRIX_WIDTH x
+            // MATRIX_HEIGHT on channel 0 only, which on a build compiled for 1220 LEDs but
+            // configured with shorter strips ran far past the end of channel 0's buffer every
+            // frame, corrupting the heap (deck3, matrix-16x16: panics in the output code shortly
+            // after this effect started).
+            for (auto& device : LEDStripEffect::_GFX)
+                device->blurRows(device->leds, device->GetMatrixWidth(), device->GetMatrixHeight(), 0, _blurFactor * 255);
             #if ENABLE_AUDIO
                 if constexpr (std::is_same_v<StarType, MusicStar>)
                 {
