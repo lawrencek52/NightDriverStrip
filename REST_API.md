@@ -445,7 +445,7 @@ When a controller panics, ESP-IDF saves a core dump to the `coredump` flash part
 | Response | 202 (Accepted) | The controller deliberately panics one second later, from a task named `CrashTest`, and reboots - for testing the crash report path end to end. |
 | | 400 (Bad Request) | `confirm=yes` was not given. |
 
-`ota_all.sh` keeps each flashed ELF as `elf-archive/<env>-<sha prefix>.elf`, so the ELF matching a report's `elfSha256` is still available after later rebuilds.
+`elfSha256` is a prefix of the crashed firmware's ELF SHA-256 (its length depends on the chip's build config: 9 hex digits on the ESP32-C5, 16 on the ESP32-S3). Every build archives its ELF as `elf-archive/<env>-<full sha256>.elf` (`tools/archive_elf.py`), so `ls elf-archive/*-<elfSha256>*.elf` finds the one to decode with, even after later rebuilds.
 
 ### Reset configuration and/or device
 

@@ -145,15 +145,6 @@ for group in "${OTA_GROUPS[@]}"; do
         continue
     fi
 
-    # Keep the ELF of every image that gets flashed, named by the first 9 hex digits of its
-    # SHA-256 - the same prefix a controller's /api/v1/crash reports as elfSha256 - so a
-    # crash can still be decoded after later rebuilds have overwritten .pio/build.
-    elf=".pio/build/$pio_env/firmware.elf"
-    if [[ -f "$elf" ]]; then
-        mkdir -p "$SCRIPT_DIR/elf-archive"
-        cp "$elf" "$SCRIPT_DIR/elf-archive/$pio_env-$(sha256sum "$elf" | cut -c1-9).elf"
-    fi
-
     for entry in $devices; do
         name="${entry%%:*}"
         ip="${entry#*:}"

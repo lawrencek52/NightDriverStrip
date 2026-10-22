@@ -18,9 +18,9 @@
 //   POST /api/v1/crash/clear   erase the stored core dump
 //   POST /api/v1/crash/test    confirm=yes: deliberately panic, to test all of the above
 //
-// Decode a summary's addresses with the matching firmware.elf (check elfSha256
-// against `sha256sum firmware.elf`), e.g. xtensa-esp32s3-elf-addr2line -pfiaC -e
-// firmware.elf <pc> <backtrace...>.
+// Decode a summary's addresses with the matching ELF - every build archives one as
+// elf-archive/<env>-<sha256>.elf, so `ls elf-archive/*-<elfSha256>*.elf` finds it - e.g.
+// xtensa-esp32s3-elf-addr2line -pfiaC -e <elf> <pc> <backtrace...>.
 //---------------------------------------------------------------------------
 
 #include "globals.h"
