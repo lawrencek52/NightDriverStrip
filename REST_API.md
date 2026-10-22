@@ -414,6 +414,39 @@ When changing settings:
 | | | One or more settings that have been returned by the [Get effect setting specifications endpoint](#get-effect-setting-specifications). |
 | Response | 200 (OK) | A JSON blob with the current values for the effect's configuration settings, after applying the values in the request's POST parameters. |
 
+### Crash reports
+
+When a controller panics, ESP-IDF saves a core dump to the `coredump` flash partition before rebooting. These endpoints read it over WiFi, so a controller that isn't plugged into USB can still be diagnosed. `/statistics` (dynamic) reports `CRASH_PRESENT` when one is stored.
+
+| Property | Value | Explanation |
+| - | - | - |
+| URL | `/api/v1/crash` | |
+| Method | GET | |
+| Response | 200 (OK) | A JSON blob: `resetReason`/`resetReasonName` (why the board last restarted), `coreDumpPartition` (whether the partition table has one), `present` (whether a valid dump is stored), `size`, and a `summary` - the crashed `task`, `pc`, `elfSha256` (first 9 hex digits of the crashed firmware's ELF SHA-256), and either `excCause`/`excVaddr`/`backtrace` (Xtensa: ESP32, ESP32-S3) or `mcause`/`mtval`/`ra`/`sp`/`stackDump` (RISC-V: ESP32-C5, which can't unwind on the device). |
+
+| Property | Value | Explanation |
+| - | - | - |
+| URL | `/api/v1/crash/raw` | |
+| Method | GET | |
+| Response | 200 (OK) | The whole core dump image (`application/octet-stream`). Decode it with the matching ELF: `python -m esp_coredump --chip <chip> info_corefile -t raw -c coredump.bin --gdb <toolchain gdb> firmware.elf`. |
+| | 404 (Not Found) | No core dump is stored. |
+
+| Property | Value | Explanation |
+| - | - | - |
+| URL | `/api/v1/crash/clear` | |
+| Method | POST | |
+| Response | 200 (OK) | The stored core dump is erased. |
+
+| Property | Value | Explanation |
+| - | - | - |
+| URL | `/api/v1/crash/test` | |
+| Method | POST | |
+| Parameters | `confirm` | Must be `yes`. |
+| Response | 202 (Accepted) | The controller deliberately panics one second later, from a task named `CrashTest`, and reboots - for testing the crash report path end to end. |
+| | 400 (Bad Request) | `confirm=yes` was not given. |
+
+`ota_all.sh` keeps each flashed ELF as `elf-archive/<env>-<sha prefix>.elf`, so the ELF matching a report's `elfSha256` is still available after later rebuilds.
+
 ### Reset configuration and/or device
 
 This endpoint can be used to reset effect configuration (see [Get effect configuration information](#get-effect-configuration-information)), device settings (see [Device settings](#device-settings)), and/or the board itself - i.e. restart it.

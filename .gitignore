@@ -21,6 +21,7 @@ include/secrets.h
 lib/*
 NightDriverStrip.code-workspace
 ota_results.log
+elf-archive/
 site/dist
 site/favicon.ico
 **/node_modules/

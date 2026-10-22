@@ -215,6 +215,11 @@ class CWebServer : public IService
     void SetEffectSettings(AsyncWebServerRequest * pRequest);
     void ValidateAndSetSetting(AsyncWebServerRequest * pRequest);
     void Reset(AsyncWebServerRequest * pRequest);
+    void GetCrashInfo(AsyncWebServerRequest * pRequest);
+    void GetCrashDump(AsyncWebServerRequest * pRequest);
+    void ClearCrashDump(AsyncWebServerRequest * pRequest);
+    void TriggerTestCrash(AsyncWebServerRequest * pRequest);
+    static bool IsCrashDumpPresent();
     void SetCurrentEffectIndex(AsyncWebServerRequest * pRequest);
     void SetChannelFrameRate(AsyncWebServerRequest * pRequest);
     void EnableEffect(AsyncWebServerRequest * pRequest);

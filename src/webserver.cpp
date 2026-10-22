@@ -289,6 +289,13 @@ void CWebServer::begin()
 
     _server.on("/reset",                 HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->Reset(pRequest); });
 
+    // Crash reports (see webserver_crash.cpp). Registered most-specific first, since
+    // AsyncWebServer also matches "/api/v1/crash" as a prefix of the longer paths.
+    _server.on("/api/v1/crash/raw",      HTTP_GET,  [this](AsyncWebServerRequest* pRequest) { this->GetCrashDump(pRequest); });
+    _server.on("/api/v1/crash/clear",    HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->ClearCrashDump(pRequest); });
+    _server.on("/api/v1/crash/test",     HTTP_POST, [this](AsyncWebServerRequest* pRequest) { this->TriggerTestCrash(pRequest); });
+    _server.on("/api/v1/crash",          HTTP_GET,  [this](AsyncWebServerRequest* pRequest) { this->GetCrashInfo(pRequest); });
+
     // Embedded file requests
 
     _server.on("/healthz", HTTP_GET, [](AsyncWebServerRequest* pRequest) { pRequest->send(CWebServer::HttpOk, "text/plain", "ok"); });
@@ -455,6 +462,7 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
             j["WIFI_STALL_RECONNECTS"]     = nd_network::GetWiFiStallReconnects();
             j["WIFI_GATEWAY_REPLY_AGE_MS"] = nd_network::GetGatewayReplyAgeMs();
         #endif
+        j["CRASH_PRESENT"]          = IsCrashDumpPresent();     // details at /api/v1/crash
 
         #if INCOMING_WIFI_ENABLED
             auto packetStats = SocketServer::GetPacketStats();
