@@ -52,6 +52,7 @@
 #include "effects/strip/fireeffect.h"           // fire effects
 #include "effects/strip/fireworkseffect.h"
 #include "effects/strip/laserline.h"
+#include "effects/strip/ledcentraleffects.h"   // CandyCane, Halloween and Fire ported from LED-Central
 #include "effects/strip/meteoreffect.h"         // meteor blend effect
 #include "effects/strip/misceffects.h"
 #include "effects/strip/paletteeffect.h"        // palette effects
@@ -153,6 +154,9 @@
     INIT_EFFECT_SETTING_SPECS(PatternSubscribers, mySettingSpecs);
     INIT_EFFECT_SETTING_SPECS(PatternStocks, mySettingSpecs);
 #endif
+INIT_EFFECT_SETTING_SPECS(CandyCaneEffect, mySettingSpecs);
+INIT_EFFECT_SETTING_SPECS(HalloweenEffect, mySettingSpecs);
+INIT_EFFECT_SETTING_SPECS(LEDCentralFireEffect, mySettingSpecs);
 
 // Default and JSON factory functions + decoration for effects
 DRAM_ATTR allocated_unique_ptr<EffectFactories> g_ptrEffectFactories = nullptr;
@@ -268,11 +272,15 @@ void LoadEffectFactories()
             // neutral white there. RGB-only builds use the fallback tinting
             // path, where warm and cool presets are visibly different.
             #if defined(USE_SK6812) && USE_SK6812
-                Effect<WarmGlowEffect>(4000, 255)
+                Effect<WarmGlowEffect>(4000, 255),
             #else
                 Effect<WarmGlowEffect>(2700, 255),
-                Effect<WarmGlowEffect>(6500, 255)
+                Effect<WarmGlowEffect>(6500, 255),
             #endif
+            // Ported from LED-Central, so these looks also run without it
+            Effect<LEDCentralFireEffect>(),
+            Effect<CandyCaneEffect>(),
+            Effect<HalloweenEffect>()
         );
 
     #endif
