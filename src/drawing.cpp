@@ -37,6 +37,7 @@
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <vector>
 
 #include "colordata.h"
 #include "ledbuffer.h"
@@ -87,16 +88,69 @@ static bool IsChannelWifiFed(size_t channel)
 // which case the local effects are skipped entirely - which is what keeps a
 // fully remote-driven device from paying for renders nobody sees.
 
+// Only the configured (active) channels count. NUM_CHANNELS is the compiled maximum, and a
+// channel beyond the configured count never receives frames, so counting it kept the local
+// effect running - painting every strip - on a device whose real strips were all fed remotely.
+
 static uint32_t ChannelsNeedingLocalDraw()
 {
     uint32_t channelMask = 0;
+    const size_t activeChannels = std::min(l_usLastWifiDraw.size(), g_ptrSystem->GetDeviceConfig().GetChannelCount());
 
-    for (size_t channel = 0; channel < l_usLastWifiDraw.size(); channel++)
+    for (size_t channel = 0; channel < activeChannels; channel++)
         if (!IsChannelWifiFed(channel))
             channelMask |= 1u << channel;
 
     return channelMask;
 }
+
+// RemoteFrameKeeper
+//
+// In the mixed case - some strips fed remotely, others showing their own effect - one shared
+// effect instance paints every strip it owns, and WiFiDraw() only repaints a fed strip on the
+// iterations where its next remote frame is due. The draw loop runs at the local effect's frame
+// rate, usually well above the remote one, so in between, the fed strips showed the local
+// effect: the two alternated. This saves the fed strips' current (last remote) pixels before
+// the local draw and puts them back after it.
+
+class RemoteFrameKeeper
+{
+    std::array<std::vector<CRGB>, NUM_CHANNELS> _saved;
+    uint32_t _savedMask = 0;
+
+  public:
+    void Save(uint32_t channelsNeedingLocalDraw)
+    {
+        _savedMask = 0;
+        const auto& devices = g_ptrSystem->GetDevices();
+        const size_t activeChannels = std::min({ _saved.size(), devices.size(), g_ptrSystem->GetDeviceConfig().GetChannelCount() });
+
+        for (size_t channel = 0; channel < activeChannels; channel++)
+        {
+            if ((channelsNeedingLocalDraw & (1u << channel)) || !IsChannelWifiFed(channel))
+                continue;
+
+            const auto& device = devices[channel];
+            _saved[channel].assign(device->leds, device->leds + device->GetLEDCount());
+            _savedMask |= 1u << channel;
+        }
+    }
+
+    void Restore()
+    {
+        const auto& devices = g_ptrSystem->GetDevices();
+        for (size_t channel = 0; channel < _saved.size() && channel < devices.size(); channel++)
+        {
+            if (!(_savedMask & (1u << channel)))
+                continue;
+
+            const auto& device = devices[channel];
+            std::copy_n(_saved[channel].begin(), std::min(_saved[channel].size(), device->GetLEDCount()), device->leds);
+        }
+    }
+};
+
+static RemoteFrameKeeper l_RemoteFrameKeeper;
 
 #if ENABLE_AUDIO
 
@@ -589,7 +643,11 @@ void IRAM_ATTR RenderService::Run()
             if (effectManager.IsPoweredOn())
             {
                 channelsNeedingLocalDraw = ChannelsNeedingLocalDraw();
+                if (channelsNeedingLocalDraw != 0)
+                    l_RemoteFrameKeeper.Save(channelsNeedingLocalDraw);
                 localPixelsDrawn = LocalDraw(channelsNeedingLocalDraw);
+                if (channelsNeedingLocalDraw != 0)
+                    l_RemoteFrameKeeper.Restore();
             }
             else if (effectManager.ConsumePendingBlankFrame())
                 localPixelsDrawn = static_cast<uint16_t>(effectManager.g().GetLEDCount());
