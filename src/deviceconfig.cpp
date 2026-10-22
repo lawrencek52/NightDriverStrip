@@ -47,6 +47,7 @@
 #include "effectmanager.h"
 #include "jsonserializer.h"
 #include "ntptimeclient.h"
+#include "random_utils.h"
 #include "systemcontainer.h"
 
 extern const char timezones_start[] asm("_binary_config_timezones_json_start");
@@ -312,6 +313,7 @@ bool DeviceConfig::SerializeToJSON(JsonObject& jsonObject, bool includeSensitive
     jsonDoc[UseCelsiusTag] = useCelsius;
     jsonDoc[NTPServerTag] = ntpServer;
     jsonDoc[RememberCurrentEffectTag] = rememberCurrentEffect;
+    jsonDoc[TrueRandomTag] = trueRandom;
     jsonDoc[RemoteEffectButtonsResetIntervalTag] = remoteEffectButtonsResetInterval;
     jsonDoc[PowerLimitTag] = powerLimit;
     jsonDoc[PowerLimitDefaultTag] = POWER_LIMIT_DEFAULT;
@@ -393,6 +395,7 @@ bool DeviceConfig::DeserializeFromJSON(const JsonObjectConst& jsonObject, bool s
     SetIfPresentIn(jsonObject, useCelsius, UseCelsiusTag);
     SetIfPresentIn(jsonObject, ntpServer, NTPServerTag);
     SetIfPresentIn(jsonObject, rememberCurrentEffect, RememberCurrentEffectTag);
+    SetIfPresentIn(jsonObject, trueRandom, TrueRandomTag);
     SetIfPresentIn(jsonObject, remoteEffectButtonsResetInterval, RemoteEffectButtonsResetIntervalTag);
     if (jsonObject[PowerLimitTag].is<int>())
     {
@@ -693,6 +696,12 @@ void DeviceConfig::SetNTPServer(const String &newNTPServer)
 void DeviceConfig::SetRememberCurrentEffect(bool newRememberCurrentEffect)
 {
     SetAndSave(rememberCurrentEffect, newRememberCurrentEffect);
+}
+
+void DeviceConfig::SetTrueRandom(bool newTrueRandom)
+{
+    SetAndSave(trueRandom, newTrueRandom);
+    ApplyRandomMode(trueRandom);
 }
 
 void DeviceConfig::SetRemoteEffectButtonsResetInterval(bool newRemoteEffectButtonsResetInterval)

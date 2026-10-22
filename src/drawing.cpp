@@ -42,6 +42,7 @@
 #include "ledbuffer.h"
 #include "nd_network.h"
 #include "ntptimeclient.h"
+#include "random_utils.h"
 #include "renderservice.h"
 #include "systemcontainer.h"
 #include "taskmgr.h"   // DRAWING_STACK_SIZE / DRAWING_PRIORITY / DRAWING_CORE
@@ -525,6 +526,7 @@ void IRAM_ATTR RenderService::Run()
     while (!ShouldShutdown())
     {
         g_Values.AppTime.NewFrame();
+        StirRandomEntropy();
 
         // An OTA flash write is in progress (see SetupOTA's onStart/onEnd/onError in
         // network.cpp, which set/clear this flag). Effect rendering and strip output

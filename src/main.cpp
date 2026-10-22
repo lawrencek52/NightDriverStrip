@@ -199,6 +199,7 @@
 #include "logger.h"
 #include "nd_network.h"
 #include "ntptimeclient.h"
+#include "random_utils.h"
 #include "remotecontrol.h"
 #include "renderservice.h"
 #include "screen.h"
@@ -511,6 +512,7 @@ void setup()
 
     // Setup config objects
     g_ptrSystem->SetupConfig();
+    ApplyRandomMode(g_ptrSystem->GetDeviceConfig().TrueRandom());
 
     #if ENABLE_WIFI
         // We create the network reader here, so classes can register their readers from this point onwards.

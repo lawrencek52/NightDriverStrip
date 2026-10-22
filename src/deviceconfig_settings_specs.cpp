@@ -279,6 +279,16 @@ const std::vector<std::reference_wrapper<SettingSpec>>& DeviceConfig::GetSetting
             .ApiPath      = "device.rememberCurrentEffect"
         }));
         settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
+            .Name         = TrueRandomTag,
+            .FriendlyName = "True random numbers",
+            .Description  = "When checked, effects draw on the ESP32's hardware random number generator, so they never repeat. "
+                            "Uncheck for pseudo-random numbers from a fixed seed, so effects replay the same random sequence - "
+                            "useful for testing and regression comparisons.",
+            .Type         = SettingSpec::SettingType::Boolean,
+            .Section      = kSectionAppearance,
+            .ApiPath      = "device.trueRandom"
+        }));
+        settingSpecs.push_back(SettingSpec::Validate(SettingSpec{
             .Name         = RemoteEffectButtonsResetIntervalTag,
             .FriendlyName = "Remote effect buttons reset interval",
             .Description  = "When enabled, remote B+/B- effect changes force the effect interval back to the default rotation speed (60 seconds). "

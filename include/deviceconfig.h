@@ -246,6 +246,7 @@ class DeviceConfig : public IJSONSerializable
         std::optional<bool> useCelsius{};
         std::optional<String> ntpServer{};
         std::optional<bool> rememberCurrentEffect{};
+        std::optional<bool> trueRandom{};
         std::optional<bool> remoteEffectButtonsResetInterval{};
         std::optional<int> powerLimit{};
         std::optional<int> brightness{};
@@ -278,6 +279,7 @@ class DeviceConfig : public IJSONSerializable
     bool    useCelsius = false;
     String  ntpServer = NTP_SERVER_DEFAULT;
     bool    rememberCurrentEffect = true;
+    bool    trueRandom = true;      // See ApplyRandomMode() in random_utils.h
     bool    remoteEffectButtonsResetInterval = true;
     int     powerLimit = POWER_LIMIT_DEFAULT;
     bool    showVUMeter = true;
@@ -386,6 +388,7 @@ class DeviceConfig : public IJSONSerializable
     static constexpr const char * UseCelsiusTag = NAME_OF(useCelsius);
     static constexpr const char * NTPServerTag = NAME_OF(ntpServer);
     static constexpr const char * RememberCurrentEffectTag = NAME_OF(rememberCurrentEffect);
+    static constexpr const char * TrueRandomTag = NAME_OF(trueRandom);
     static constexpr const char * RemoteEffectButtonsResetIntervalTag = NAME_OF(remoteEffectButtonsResetInterval);
     static constexpr const char * PowerLimitTag = NAME_OF(powerLimit);
     static constexpr const char * PowerLimitDefaultTag = "powerLimitDefault";
@@ -474,6 +477,9 @@ class DeviceConfig : public IJSONSerializable
 
     bool RememberCurrentEffect() const { return rememberCurrentEffect; }
     void SetRememberCurrentEffect(bool newRememberCurrentEffect);
+
+    bool TrueRandom() const { return trueRandom; }
+    void SetTrueRandom(bool newTrueRandom);
 
     bool RemoteEffectButtonsResetInterval() const { return remoteEffectButtonsResetInterval; }
     void SetRemoteEffectButtonsResetInterval(bool newRemoteEffectButtonsResetInterval);

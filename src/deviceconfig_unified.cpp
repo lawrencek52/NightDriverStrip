@@ -196,6 +196,7 @@ void DeviceConfig::SerializeUnifiedSettings(JsonObject root) const
     // masked placeholder instead of an always-blank field regardless of whether one is set.
     device["openWeatherApiKeySet"] = !GetOpenWeatherAPIKey().isEmpty();
     device["rememberCurrentEffect"] = RememberCurrentEffect();
+    device["trueRandom"] = TrueRandom();
     device["powerLimit"] = GetPowerLimit();
     device["brightness"] = GetBrightness();
     device["globalColor"] = GlobalColor();
@@ -591,6 +592,7 @@ SuccessResultWithMessage DeviceConfig::ParseAndValidateUnifiedSettings(JsonObjec
         FieldAccess::AssignIfPresent(device, UseCelsiusTag, out.useCelsius);
         FieldAccess::AssignIfPresent(device, NTPServerTag, out.ntpServer);
         FieldAccess::AssignIfPresent(device, RememberCurrentEffectTag, out.rememberCurrentEffect);
+        FieldAccess::AssignIfPresent(device, TrueRandomTag, out.trueRandom);
 
         if (device["remote"].is<JsonObjectConst>())
         {
@@ -723,6 +725,7 @@ SuccessResultWithMessage DeviceConfig::ApplyUnifiedDeviceSettings(const UnifiedS
     FieldAccess::ApplyIfPresent(request.useCelsius, *this, &DeviceConfig::SetUseCelsius);
     FieldAccess::ApplyIfPresent(request.ntpServer, *this, &DeviceConfig::SetNTPServer);
     FieldAccess::ApplyIfPresent(request.rememberCurrentEffect, *this, &DeviceConfig::SetRememberCurrentEffect);
+    FieldAccess::ApplyIfPresent(request.trueRandom, *this, &DeviceConfig::SetTrueRandom);
     FieldAccess::ApplyIfPresent(request.remoteEffectButtonsResetInterval, *this, &DeviceConfig::SetRemoteEffectButtonsResetInterval);
     FieldAccess::ApplyIfPresent(request.powerLimit, *this, &DeviceConfig::SetPowerLimit);
     FieldAccess::ApplyIfPresent(request.brightness, *this, &DeviceConfig::SetBrightness);

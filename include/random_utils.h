@@ -36,6 +36,21 @@
 #include <random>
 #include <type_traits>
 
+// Randomness mode - the "trueRandom" device setting (DeviceConfig::SetTrueRandom).
+//
+//   true:  Arduino random() reads the ESP32's hardware RNG (esp_random(), truly random while
+//          the radio is on), and the draw loop stirs fresh hardware entropy into FastLED's
+//          random8()/random16() every frame (StirRandomEntropy), so they never repeat either.
+//   false: Arduino random(), FastLED and std::rand() all restart from one fixed seed, so
+//          effects replay the same random sequence from that point on - for testing and
+//          regression comparisons.
+void ApplyRandomMode(bool trueRandom);
+bool IsTrueRandom();
+// Called once per frame from the draw loop; a no-op in pseudo-random mode.
+void StirRandomEntropy();
+// 32 random bits from whichever source the current mode uses.
+uint32_t RandomU32();
+
 template <typename T>
 inline static T random_range(T lower, T upper)
 {
@@ -53,12 +68,11 @@ inline static T random_range(T lower, T upper)
         return distrib(gen);
     }
 #else
-    static bool seeded = [&] { srand(time(nullptr)); return true; } ();
-
+    // Seeded by ApplyRandomMode() - hardware bits in true-random mode, a fixed seed otherwise.
     if constexpr (std::is_integral<T>::value) {
-        return std::rand() % (upper - lower + 1) + lower;
+        return RandomU32() % (upper - lower + 1) + lower;
     } else if constexpr (std::is_floating_point<T>::value) {
-        return std::rand() / (RAND_MAX / (upper - lower)) + lower;
+        return RandomU32() / (4294967295.0 / (upper - lower)) + lower;
     } else {
         static_assert(std::is_integral<T>::value || std::is_floating_point<T>::value, "Template argument must be numeric type");
     }
