@@ -363,7 +363,12 @@ void GFXBase::fadePixelToBlackBy(int16_t x, int16_t y, uint8_t fadeValue) noexce
 
 void GFXBase::fadePixelToBlackBy(int16_t i, uint8_t fadeValue) noexcept
 {
-    FadePixelInPlace(leds[i], fadeValue);
+    // Callers such as fadePixelToBlackOnAllChannelsBy() bound the index by channel 0's
+    // length, and another channel can be shorter in individual-strips mode, so check
+    // against this device's own size (deck1: 210/210/210/201 LEDs, Color Meteors and
+    // Bouncing Balls faded 9 pixels past channel 3's buffer and corrupted the heap).
+    if (i >= 0 && isValidPixel(i))
+        FadePixelInPlace(leds[i], fadeValue);
 }
 
 void GFXBase::DrawSafeCircle(int centerX, int centerY, int radius, CRGB color) noexcept
