@@ -476,7 +476,7 @@ class HalloweenEffect : public EffectWithId<HalloweenEffect>
         FieldAccess::AssignIfPresent(jsonObject, "gsp", glowSpeed);
         FieldAccess::AssignIfPresent(jsonObject, "ec", eyeCount);
         FieldAccess::AssignIfPresent(jsonObject, "ecl", eyeColor);
-        FieldAccess::AssignIfPresent(jsonObject, "es", eyeSize);
+        FieldAccess::AssignIfPresent(jsonObject, "esz", eyeSize);     // not "es": LEDStripEffect's enabled flag
         FieldAccess::AssignIfPresent(jsonObject, "eg", eyeGap);
         FieldAccess::AssignIfPresent(jsonObject, "lpm", lightningPerMinute);
         FieldAccess::AssignIfPresent(jsonObject, "lc", lightningColor);
@@ -494,7 +494,7 @@ class HalloweenEffect : public EffectWithId<HalloweenEffect>
         jsonDoc["gsp"] = glowSpeed;
         jsonDoc["ec"] = eyeCount;
         jsonDoc["ecl"] = eyeColor;
-        jsonDoc["es"] = eyeSize;
+        jsonDoc["esz"] = eyeSize;
         jsonDoc["eg"] = eyeGap;
         jsonDoc["lpm"] = lightningPerMinute;
         jsonDoc["lc"] = lightningColor;
