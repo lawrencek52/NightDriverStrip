@@ -174,6 +174,13 @@ class LEDStripEffect : public IJSONSerializable
         return MaximumEffectTime() != 0;
     }
 
+    // Manual-only effects (test patterns like Length Test) play only when picked: rotation
+    // skips them, and once one is playing the effect timer never moves on from it.
+    virtual bool IsManualOnly() const
+    {
+        return false;
+    }
+
     // Per-effect brightness override (1-100%), layered multiplicatively on top of the
     // device's global brightness and nightly schedule while this effect is active.
     virtual size_t BrightnessOverride() const

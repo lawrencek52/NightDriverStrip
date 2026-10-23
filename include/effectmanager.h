@@ -174,6 +174,11 @@ class  EffectManager : public IJSONSerializable
     void construct(bool clearTempEffect);
     void DispatchBeatIfNeeded();
 
+    // Whether Next/PreviousEffect() may land on effect i: enabled (or play-all is on), and not
+    // a manual-only effect such as Length Test.
+    bool IsEffectInRotation(size_t i) const;
+    bool AnyEffectInRotation() const;
+
     // Gives every ChannelPlayback the one-element gfx vector it hands to Init().
     // Must be re-run whenever the device vector is rebuilt (live topology change).
     void BindChannelGraphics();

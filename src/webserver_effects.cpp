@@ -70,6 +70,8 @@ void CWebServer::GetEffectListText(AsyncWebServerRequest * pRequest)
             effectDoc["name"]    = effect->FriendlyName();
             effectDoc["enabled"] = effect->IsEnabled();
             effectDoc["core"]    = effect->IsCoreEffect();
+            if (effect->IsManualOnly())
+                effectDoc["manualOnly"] = true;     // never in the rotation, whatever "enabled" says
 
             if (!j["Effects"].add(effectDoc))
             {

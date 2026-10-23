@@ -841,6 +841,9 @@ void EffectManager::CheckEffectTimerExpired()
     if (IsIntervalEternal() && !GetCurrentEffect().HasMaximumEffectTime())
         return;
 
+    if (!_tempEffect && GetCurrentEffect().IsManualOnly())
+        return;
+
     if (GetTimeUsedByCurrentEffect() >= GetEffectiveInterval())
     {
         if (_clearTempEffectWhenExpired)
@@ -853,6 +856,21 @@ void EffectManager::CheckEffectTimerExpired()
         NextEffect();
         debugV("Current Effect: %s", GetCurrentEffectName().c_str());
     }
+}
+
+bool EffectManager::IsEffectInRotation(size_t i) const
+{
+    return i < _vEffects.size()
+        && !_vEffects[i]->IsManualOnly()
+        && (_bPlayAll || _vEffects[i]->IsEnabled());
+}
+
+bool EffectManager::AnyEffectInRotation() const
+{
+    for (size_t i = 0; i < _vEffects.size(); ++i)
+        if (IsEffectInRotation(i))
+            return true;
+    return false;
 }
 
 // Update to the next effect and abort the current effect.
@@ -876,14 +894,14 @@ void EffectManager::NextEffect(bool skipSave)
         return;
     }
 
-    auto enabled = AreEffectsEnabled();
+    const bool anyInRotation = AnyEffectInRotation();
 
     do
     {
         _iCurrentEffect++;
         _iCurrentEffect %= EffectCount();
         _effectStartTime = millis();
-    } while (enabled && false == _bPlayAll && false == IsEffectEnabled(_iCurrentEffect));
+    } while (anyInRotation && !IsEffectInRotation(_iCurrentEffect));
 
     StartEffect();
     if (!skipSave)
@@ -910,7 +928,7 @@ void EffectManager::PreviousEffect()
         return;
     }
 
-    auto enabled = AreEffectsEnabled();
+    const bool anyInRotation = AnyEffectInRotation();
 
     do
     {
@@ -919,7 +937,7 @@ void EffectManager::PreviousEffect()
 
         _iCurrentEffect--;
         _effectStartTime = millis();
-    } while (enabled && false == _bPlayAll && false == IsEffectEnabled(_iCurrentEffect));
+    } while (anyInRotation && !IsEffectInRotation(_iCurrentEffect));
 
     StartEffect();
     SaveCurrentEffectIndex();

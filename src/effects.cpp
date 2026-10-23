@@ -53,6 +53,7 @@
 #include "effects/strip/fireworkseffect.h"
 #include "effects/strip/laserline.h"
 #include "effects/strip/ledcentraleffects.h"   // CandyCane, Halloween and Fire ported from LED-Central
+#include "effects/strip/lengthtesteffect.h"     // Length Test ruler for finding exact strip lengths
 #include "effects/strip/meteoreffect.h"         // meteor blend effect
 #include "effects/strip/misceffects.h"
 #include "effects/strip/paletteeffect.h"        // palette effects
@@ -280,7 +281,9 @@ void LoadEffectFactories()
             // Ported from LED-Central, so these looks also run without it
             Effect<LEDCentralFireEffect>(),
             Effect<CandyCaneEffect>(),
-            Effect<HalloweenEffect>()
+            Effect<HalloweenEffect>(),
+            // Manual-only test pattern for measuring strip lengths; rotation never picks it
+            Effect<LengthTestEffect>()
         );
 
     #endif

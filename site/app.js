@@ -449,7 +449,9 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       els.summaryEffectStatus.textContent = `${effects.channelEffects.length} strips, rotation off`;
     } else {
       els.summaryCurrentEffect.textContent = currentEffect ? currentEffect.name : "--";
-      els.summaryEffectStatus.textContent = currentEffect ? (currentEffect.enabled ? "Enabled" : "Disabled") : "No effect";
+      els.summaryEffectStatus.textContent = currentEffect
+        ? (currentEffect.manualOnly ? "Manual only, rotation paused" : (currentEffect.enabled ? "Enabled" : "Disabled"))
+        : "No effect";
     }
     els.summaryInterval.textContent = pinned
       ? (intervalScale.offLabel || "Off")
@@ -558,7 +560,13 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       toggle.type = "checkbox";
       toggle.id = `nd-effect-${index}-enabled`;
       toggle.name = toggle.id;
-      toggle.checked = !!effect.enabled;
+      // A manual-only effect (Length Test) is never in the rotation, so its ON box shows
+      // unchecked and can't be changed; it plays only from its play buttons.
+      toggle.checked = !!effect.enabled && !effect.manualOnly;
+      toggle.disabled = !!effect.manualOnly;
+      if (effect.manualOnly) {
+        toggle.title = "Manual only: never in the rotation. Press ▶ to play it; it stays until you pick another effect.";
+      }
       toggle.dataset.action = "enabled";
       toggle.addEventListener("change", () => {
         postForm(effect.enabled ? "/disableEffect" : "/enableEffect", { effectIndex: index }).then(loadEffectsOnly).catch((error) => {
@@ -580,7 +588,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
           ? "All strips"
           : `Strip ${playingOn.join(", ")}`;
       } else {
-        statusCell.textContent = isCurrent ? "Active" : (effect.enabled ? "Queued" : "Disabled");
+        statusCell.textContent = isCurrent ? "Active" : (effect.manualOnly ? "Manual" : (effect.enabled ? "Queued" : "Disabled"));
       }
       tr.appendChild(statusCell);
 
@@ -592,14 +600,15 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       const actionsCell = document.createElement("td");
       actionsCell.className = "row-actions";
       const allStripsTitle = channelEffects.length > 1 ? "Play on all strips (resumes rotation)" : "Trigger effect";
-      actionsCell.appendChild(tagAction(miniIconButton("▶", allStripsTitle, () => postForm("/currentEffect", { currentEffectIndex: index }).then(loadEffectsOnly), !effect.enabled), "play"));
+      const playable = !!effect.enabled || !!effect.manualOnly;
+      actionsCell.appendChild(tagAction(miniIconButton("▶", allStripsTitle, () => postForm("/currentEffect", { currentEffectIndex: index }).then(loadEffectsOnly), !playable), "play"));
 
       // One numbered button per output channel, so an effect can be pinned to a
       // single strip. Pinning stops the rotation timer; "▶" above puts it back.
       if (channelEffects.length > 1) {
         channelEffects.forEach((playing, channel) => {
           const button = tagAction(miniIconButton(String(channel + 1), `Play on strip ${channel + 1} only`, () =>
-            postForm("/currentEffect", { currentEffectIndex: index, channel }).then(loadEffectsOnly), !effect.enabled), `strip-${channel}`);
+            postForm("/currentEffect", { currentEffectIndex: index, channel }).then(loadEffectsOnly), !playable), `strip-${channel}`);
           if (playing === index) {
             button.classList.add("channel-button-active");
           }
@@ -925,8 +934,78 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
         return;
       }
       syncTopologyLayoutVisibility();
+      maybeLiveApplyStripLength(target);
     });
+    // Keyboard arrows in a number field fire "input" per step, but "change" only on blur in
+    // some browsers - listen to both so Length Test follows either.
+    els.deviceSettingsForm.addEventListener("input", (event) => maybeLiveApplyStripLength(event.target));
     _matrixLayoutRerenderWired = true;
+  }
+
+  // While the Length Test effect is playing, a channel's strip length is applied as soon as it
+  // changes (each up/down arrow click), without waiting for Apply, so its white end LED follows
+  // the field. Topology applies live on the device. Posts are serialized per field and only
+  // the latest value is sent, so holding an arrow down can't reorder them.
+  const _liveStripLength = new Map();   // setting name -> { busy, pending }
+
+  function isLengthTestPlaying() {
+    const effects = state.effects;
+    const list = effects && Array.isArray(effects.Effects) ? effects.Effects : [];
+    const isLengthTest = (index) => list[Number(index)] && list[Number(index)].name === "Length Test";
+    if (effects && effects.channelsIndependent && Array.isArray(effects.channelEffects)) {
+      return effects.channelEffects.some(isLengthTest);
+    }
+    return Boolean(effects) && isLengthTest(effects.currentEffect || 0);
+  }
+
+  function maybeLiveApplyStripLength(target) {
+    const name = target && target.dataset ? target.dataset.settingName : null;
+    if (!name || !/^channel\d+StripLength$/.test(name) || !isLengthTestPlaying()) {
+      return;
+    }
+    const spec = getOrderedDeviceSettingSpecs().find((candidate) => candidate.name === name);
+    if (!spec || !spec.apiPath || !validateFieldValue(spec, target.value).valid) {
+      return;
+    }
+    const entry = _liveStripLength.get(name) || { busy: false, pending: undefined, applied: undefined };
+    const value = coerceFieldValue(spec, target.value);
+    // A spinner click fires both input and change; send each value once.
+    if (valuesEqual(value, entry.busy ? (entry.pending ?? entry.sending) : entry.applied)) {
+      return;
+    }
+    entry.pending = value;
+    _liveStripLength.set(name, entry);
+    if (!entry.busy) {
+      void pumpLiveStripLength(spec, entry);
+    }
+  }
+
+  async function pumpLiveStripLength(spec, entry) {
+    entry.busy = true;
+    try {
+      while (entry.pending !== undefined) {
+        const value = entry.pending;
+        entry.pending = undefined;
+        entry.sending = value;
+        const { unifiedPayload } = splitDeviceDraftPayloads({ [spec.name]: value });
+        await postJson("/api/v1/settings", unifiedPayload);
+        // Now the device's value: keep the cached settings in step (later payloads seed the
+        // channels array from them) and drop the draft so Apply doesn't resend it.
+        writeJsonPath(state.unifiedSettings, spec.apiPath, value);
+        if (valuesEqual(state.deviceDraft[spec.name], value)) {
+          delete state.deviceDraft[spec.name];
+        }
+        entry.applied = value;
+        toast(`${spec.friendlyName || spec.name}: ${value} (applied)`, "success");
+      }
+    } catch (error) {
+      entry.pending = undefined;
+      entry.applied = undefined;
+      handleError(`Failed to apply ${spec.friendlyName || spec.name}`, error);
+    } finally {
+      entry.busy = false;
+      entry.sending = undefined;
+    }
   }
 
   // Returns "N:strip" or "N:matrix" (channel index + the shape this field requires) if this
@@ -1596,6 +1675,7 @@ $$$$$$$b   *u    ^$L            $$  $$$$$$$$$$$$u@       $$  d$$$$$$
       ? "number"
       : "text";
     assignControlIdentity(control, ctx, "value");
+    control.dataset.settingName = spec.name;
     if (spec.minimumValue !== undefined) control.min = spec.minimumValue;
     if (spec.maximumValue !== undefined) control.max = spec.maximumValue;
     if (spec.type === settingType.Integer || spec.type === settingType.PositiveBigInteger) control.step = "1";
