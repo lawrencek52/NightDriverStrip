@@ -985,23 +985,23 @@ uint8_t DeviceConfig::GetScheduleDimFactor255() const
     localtime_r(&now, &localTm);
     const uint16_t nowMinutes = (uint16_t)(localTm.tm_hour * 60 + localTm.tm_min);
 
-    // A typical schedule dims in the evening, goes off after midnight, and comes back on the
-    // next morning - i.e. it straddles the 0/1440 wraparound. Shifting everything by half a day
-    // moves that wraparound to midday instead, where a plain nightly schedule never lands, so
-    // the three thresholds can be compared with simple linear less-than checks.
-    auto shift = [](uint16_t m) { return (uint16_t)(((int)m - 720 + 1440) % 1440); };
+    // Whichever of the three events happened most recently decides the state: still dimmed
+    // if the dim time is the latest one to have passed, off if the off time is, normal if
+    // the on time is. This works for any order around the clock - including an on time in
+    // the evening, e.g. on at sunset, dim at 23:00, off at 00:30 (garage1), which the
+    // previous "dim, then off, then on in the morning" comparison treated as always on.
+    // Ties go to off, then dim, so an empty dim window means straight to off.
+    auto minutesSince = [nowMinutes](uint16_t eventMinutes) { return (uint16_t)((nowMinutes - eventMinutes + 1440) % 1440); };
 
-    const uint16_t shiftedNow = shift(nowMinutes);
-    const uint16_t shiftedDim = shift(dimMinutes);
-    const uint16_t shiftedOff = shift(offMinutes);
-    const uint16_t shiftedOn  = shift(onMinutes);
+    const uint16_t sinceDim = minutesSince(dimMinutes);
+    const uint16_t sinceOff = minutesSince(offMinutes);
+    const uint16_t sinceOn  = minutesSince(onMinutes);
 
-    if (shiftedNow < shiftedDim || shiftedNow >= shiftedOn)
-        return 255;
-    if (shiftedNow < shiftedOff)
+    if (sinceOff <= sinceDim && sinceOff <= sinceOn)
+        return 0;
+    if (sinceDim <= sinceOn)
         return (uint8_t)std::lround(255.0 * scheduleDimPercent / 100.0);
-
-    return 0;
+    return 255;
 }
 
 SuccessResultWithMessage DeviceConfig::ValidatePowerLimit(int newPowerLimit)
