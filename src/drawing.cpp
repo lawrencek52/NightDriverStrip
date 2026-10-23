@@ -356,6 +356,21 @@ uint16_t WiFiDraw()
 // exactly, while one shared effect instance paints every strip it owns - the
 // draw loop handles that case by drawing remote frames afterwards, on top.
 
+// LongestChannelLEDCount
+//
+// The "pixels drawn" figure for a local frame. PostProcessFrame() and the output manager clip
+// every channel to it, so it has to be the longest channel's length: channel 0's alone cut the
+// longer strips short (deck1 couldn't light strips 2-4 past strip 1's 210 LEDs).
+
+static uint16_t LongestChannelLEDCount()
+{
+    auto& effectManager = g_ptrSystem->GetEffectManager();
+    size_t longest = 0;
+    for (int i = 0; i < NUM_CHANNELS; i++)
+        longest = std::max(longest, effectManager.g(i).GetLEDCount());
+    return static_cast<uint16_t>(std::min<size_t>(longest, UINT16_MAX));
+}
+
 uint16_t LocalDraw(uint32_t channelMask)
 {
     // Every strip is being fed remotely, so there is nothing local to draw.
@@ -390,8 +405,8 @@ uint16_t LocalDraw(uint32_t channelMask)
                 #endif
             #endif
 
-            const auto activeLEDCount = g_ptrSystem->GetEffectManager().g().GetLEDCount();
-            debugV("LocalDraw claims to have drawn %zu pixels", activeLEDCount);
+            const auto activeLEDCount = LongestChannelLEDCount();
+            debugV("LocalDraw claims to have drawn %u pixels", activeLEDCount);
             return activeLEDCount;
         }
     }
@@ -650,7 +665,7 @@ void IRAM_ATTR RenderService::Run()
                     l_RemoteFrameKeeper.Restore();
             }
             else if (effectManager.ConsumePendingBlankFrame())
-                localPixelsDrawn = static_cast<uint16_t>(effectManager.g().GetLEDCount());
+                localPixelsDrawn = LongestChannelLEDCount();
             else
                 localPixelsDrawn = 0;
 

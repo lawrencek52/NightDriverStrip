@@ -884,6 +884,25 @@ void WS281xOutputManager::ReleaseChannel(size_t channelIndex)
     state.active = false;
 }
 
+// BlankChannelIfShrinking
+//
+// LEDs latch the last color they were sent, and a frame only reaches as far as the channel's
+// LED count. So when a live topology change shortens a channel (or turns it off) on the same
+// pin, the LEDs past its new end would stay lit with whatever they last showed. Before the
+// channel is resized, send one all-black frame over its old length on that channel alone; the
+// other channels just skip a frame. All-zero bytes are "off" in every pixel format.
+
+void WS281xOutputManager::BlankChannelIfShrinking(size_t channelIndex, int8_t newPin, size_t newLEDCount)
+{
+    auto& state = _channels[channelIndex];
+    if (!state.active || !state.installed || !state.outputBytes || state.pin != newPin || newLEDCount >= state.ledCount)
+        return;
+
+    std::fill_n(state.outputBytes.get(), state.byteCount, 0);
+    const FrameChannel blank = { channelIndex, state.outputBytes.get(), state.byteCount, state.pin, state.ledCount };
+    _transport->ShowFrame(&blank, 1);
+}
+
 SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& config, const std::vector<std::shared_ptr<GFXBase>>& devices)
 {
     // ApplyConfig and Show share the transport mutex so GPIO/channel changes are
@@ -908,6 +927,7 @@ SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& co
         const bool shouldBeActive = i < channelCount;
         if (!shouldBeActive)
         {
+            BlankChannelIfShrinking(i, _channels[i].pin, 0);
             ReleaseChannel(i);
             continue;
         }
@@ -915,6 +935,7 @@ SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& co
         const size_t channelLEDCount = config.GetChannelLEDCount(i);
         if (channelLEDCount == 0)
         {
+            BlankChannelIfShrinking(i, pins[i], 0);
             ReleaseChannel(i);
             continue;
         }
@@ -922,6 +943,7 @@ SuccessResultWithMessage WS281xOutputManager::ApplyConfig(const DeviceConfig& co
         auto& state = _channels[i];
         if (!state.active || !state.installed || state.pin != pins[i] || state.ledCount != channelLEDCount)
         {
+            BlankChannelIfShrinking(i, pins[i], channelLEDCount);
             auto [channelRecreated, recreateError] = RecreateChannel(i, pins[i], channelLEDCount);
             if (!channelRecreated)
                 return { false, recreateError };

@@ -48,6 +48,7 @@ class WS281xOutputManager : public IStripOutputManager
 
     SuccessResultWithMessage RecreateChannel(size_t channelIndex, int8_t pin, size_t ledCount);
     void ReleaseChannel(size_t channelIndex);
+    void BlankChannelIfShrinking(size_t channelIndex, int8_t newPin, size_t newLEDCount);
 
   public:
     WS281xOutputManager();
