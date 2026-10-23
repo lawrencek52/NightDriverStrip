@@ -464,6 +464,14 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
         #endif
         j["CRASH_PRESENT"]          = IsCrashDumpPresent();     // details at /api/v1/crash
 
+        // Where the nightly brightness schedule is right now, so LED-Central can follow it
+        // (e.g. quieter thunder while dimmed, none while off). 255 = normal, 0 = off.
+        {
+            const uint8_t dimFactor = g_ptrSystem->GetDeviceConfig().GetScheduleDimFactor255();
+            j["SCHEDULE_DIM_FACTOR"] = dimFactor;
+            j["SCHEDULE_STATE"]      = dimFactor == 255 ? "normal" : dimFactor == 0 ? "off" : "dim";
+        }
+
         #if INCOMING_WIFI_ENABLED
             auto packetStats = SocketServer::GetPacketStats();
             j["PACKETS_RX"]             = packetStats.received;
