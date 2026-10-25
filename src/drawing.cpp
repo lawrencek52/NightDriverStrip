@@ -415,6 +415,27 @@ uint16_t LocalDraw(uint32_t channelMask)
     return 0;
 }
 
+// MillisUntilNextWiFiFrame
+//
+// How long until the earliest buffered WiFi frame on any channel is due, rounded up to whole
+// milliseconds so the draw loop doesn't wake just before it; -1 when no frame is buffered.
+
+static int MillisUntilNextWiFiFrame()
+{
+    if (!g_ptrSystem->HasBufferManagers())
+        return -1;
+
+    std::lock_guard guard(g_buffer_mutex);
+    double t = std::numeric_limits<double>::max();
+    for (auto& bufferManager : g_ptrSystem->GetBufferManagers())
+        if (auto pOldest = bufferManager.PeekOldestBuffer())
+            t = std::min(t, std::max(0.0, pOldest->TimeTillDue()));
+
+    if (t == std::numeric_limits<double>::max() || !std::isfinite(t))
+        return -1;
+    return static_cast<int>(std::ceil(std::min(t, 1.0) * MILLIS_PER_SECOND));
+}
+
 // CalcDelayUntilNextFrame
 //
 // Returns the amount of time to wait patiently until it's time to draw the next frame, up to one second max
@@ -717,10 +738,15 @@ void IRAM_ATTR RenderService::Run()
             #endif
         }
 
-        // Delay at least 2ms and not more than 1s until next frame is due
+        // Delay at least 5ms and not more than 1s until next frame is due. When only WiFi frames
+        // are waiting, sleep until the next one is due instead, to the millisecond: frames carry
+        // a wall-clock timestamp so that every controller shows them at the same moment, and
+        // the 5ms floor (plus truncating the wait to whole ms) could show one up to ~5ms late.
 
         constexpr auto minimumDelay = 5;
-        delay( std::max(minimumDelay, CalcDelayUntilNextFrame(frameStartTime, localPixelsDrawn, wifiPixelsDrawn) ));
+        const int delayMs = CalcDelayUntilNextFrame(frameStartTime, localPixelsDrawn, wifiPixelsDrawn);
+        const int wifiDueMs = localPixelsDrawn == 0 && nd_network::IsWiFiConnected() ? MillisUntilNextWiFiFrame() : -1;
+        delay(wifiDueMs >= 0 ? std::max(1, wifiDueMs) : std::max(minimumDelay, delayMs));
     }
 
     SetWiFiActivityPin(false);
