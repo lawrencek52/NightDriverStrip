@@ -1,34 +1,33 @@
-# NightDriverStrip <!-- omit in toc -->
-
-- **Mesmerizer kits**, as demonstrated in [this video](https://youtu.be/COJnlehBcKw) and featured in the background of many other Dave's Garage videos, are now [available for sale on eBay](https://www.ebay.com/itm/335801442651)! (If that listing expires before we update the link, check out [Dave's listings](https://www.ebay.com/sch/i.html?_dkr=1&iconV2Request=true&_blrs=recall_filtering&_ssn=davepl&_oac=1); if the kits are available then the listing will be there.)
-- We are searching for **talented React and C++ developers** to help out on this project.  Check out the code and if you're interested, contact <davepl@davepl.com>.
-
-&nbsp;
-
-![CI](https://github.com/PlummersSoftwareLLC/NightDriverStrip/actions/workflows/CI.yml/badge.svg) ![Release Web Installer build and deploy](https://github.com/PlummersSoftwareLLC/NightDriverStrip/actions/workflows/release.yml/badge.svg)
+# NightDriverStrip (lawrencek52 fork) <!-- omit in toc -->
 
 <!-- markdownlint-disable MD033 /no-inline-html -->
 <img src="assets/NightDriverLogo-small.png" width="400" alt="NightDriver logo" />
 
-<!-- markdownlint-disable-next-line MD036 /no-emphasis-as-heading -->
-_Davepl, 9/19/2021_
+NightDriverStrip is ESP32 firmware that drives WS2812B-style LED strips and
+HUB75 LED matrices: it runs its own effects, including audio-reactive ones,
+and it can show frames streamed to it over WiFi. It was created by
+[Dave Plummer](https://github.com/davepl) and is developed by the
+NightDriverStrip community at
+[PlummersSoftwareLLC/NightDriverStrip](https://github.com/PlummersSoftwareLLC/NightDriverStrip).
 
-- See [Discussions](http://github.com/PlummersSoftwareLLC/NightDriverStrip/discussions) for questions and comments.
-- See source code and [COPYING.txt](COPYING.txt) for detailed technical and licensing information including versions.
+This repository is a fork of that project. It adds support for the Seeed XIAO
+ESP32-C5 and ESP32-S3 and the Waveshare ESP32-S3-RGB-Matrix boards, makes
+every output channel its own strip or matrix, and was developed alongside
+[LED-Central](https://github.com/lawrencek52/LED-Central), a server that
+drives many controllers as one display. Everything here builds on the upstream
+project; see [Credits](#credits).
 
 ## Table of Contents <!-- omit in toc -->
 
-- [What NightDriverStrip is](#what-nightdriverstrip-is)
-- [Project Overview](#project-overview)
-- [Key Features](#key-features)
-- [Using the Web Installer](#using-the-web-installer)
-  - [Introduction](#introduction)
-  - [(Re)flashing your device with the Web Installer](#reflashing-your-device-with-the-web-installer)
-  - [Reconfiguring WiFi using the Web Installer](#reconfiguring-wifi-using-the-web-installer)
-- [Beyond the Web Installer](#beyond-the-web-installer)
+- [Credits](#credits)
+- [What this fork adds](#what-this-fork-adds)
+- [Tested hardware](#tested-hardware)
+- [Getting started](#getting-started)
+- [Configuring a controller](#configuring-a-controller)
+- [Using it with LED-Central](#using-it-with-led-central)
+- [Diagnostics](#diagnostics)
+- [Effects](#effects)
 - [Device web UI and API](#device-web-ui-and-api)
-- [Getting started with the source code](#getting-started-with-the-source-code)
-- [Wifi setup](#wifi-setup)
 - [Feature defines](#feature-defines)
 - [IR remote control](#ir-remote-control)
 - [Adding new effects](#adding-new-effects)
@@ -36,9 +35,6 @@ _Davepl, 9/19/2021_
 - [Resetting the effect list](#resetting-the-effect-list)
 - [Fetching things from the Internet](#fetching-things-from-the-internet)
 - [Build pointers](#build-pointers)
-  - [Build tools](#build-tools)
-  - [Build commands](#build-commands)
-  - [Optional audit policy](#optional-audit-policy)
 - [File system](#file-system)
 - [Tools](#tools)
 - [COM port problems](#com-port-problems)
@@ -46,102 +42,185 @@ _Davepl, 9/19/2021_
 - [Super Bonus Exercise](#super-bonus-exercise)
 - [Sample parts (Plummer's Software LLC Amazon affiliate links)](#sample-parts-plummers-software-llc-amazon-affiliate-links)
 - [Contributing, and the BlinkenPerBit metric](#contributing-and-the-blinkenperbit-metric)
-- [Time it takes to build this project](#time-it-takes-to-build-this-project)
-- [Old Build times, no longer relevant with current platformio, just historical curiosity](#old-build-times-no-longer-relevant-with-current-platformio-just-historical-curiosity)
 
-## What NightDriverStrip is
+## Credits
 
-NightDriverStrip is a source code package for building a flash program that you upload to the [ESP32 microcontroller](https://en.wikipedia.org/wiki/ESP32). It can drive up to 8 channels of WS2812B style LEDs connected to the chip pins and display fancy colors and patterns and designs on them. There are numerous effects built in that can be configured to be shown on the LED strip, including audio/music/beat-reactive effects for modules equipped with a microphone. It can also optionally receive color data for the LEDs in a simple LZ-compressed (or non-compressed) format over a TCP/IP socket that is opened by default on port 49152. The ESP32 keeps its clock in sync using NTP.
+- **Dave Plummer** ([Dave's Garage](https://www.youtube.com/@DavesGarage))
+  created NightDriverStrip in 2021 and continues to lead it. The core design
+  (the effect manager, the GFX layer, timestamped WiFi frames with NTP so
+  effects can span many ESP32s, the web UI and the effect library) is his and
+  the community's work. Dave's Mesmerizer kits, the project's HUB75 hardware,
+  are [sold on eBay](https://www.ebay.com/sch/i.html?_ssn=davepl).
+- **The NightDriverStrip contributors**: more than thirty people, most of all
+  Rutger van Bergen and Robert Lipe, plus keiranhines and many others. See the
+  [upstream contributors](https://github.com/PlummersSoftwareLLC/NightDriverStrip/graphs/contributors).
+- **Effect sources** credited in the code, among them
+  [Aurora](https://github.com/pixelmatix/aurora) by Jason Coon (Pixelmatix),
+  Stefan Petrick's noise effects, the
+  [SoulMate Lights](https://editor.soulmatelights.com/) community gallery
+  (including Stepko), and [FastLED](https://github.com/FastLED/FastLED).
+- **This fork** (Lawrence King, from August 2026) is the work described below.
+  Its Halloween effect's eyes and lightning are inspired by
+  [WLED](https://github.com/wled/WLED)'s "Halloween Eyes" and "Lightning"
+  (which build on Harm Aldick's WS2812FX); no code was taken from them.
 
-NightDriver can drive both WS2812B style strips and HUB75 style matrices.
+NightDriverStrip is free software under the GNU General Public License,
+version 3 or later; see [COPYING.txt](COPYING.txt). Questions about the
+upstream project belong in its
+[Discussions](https://github.com/PlummersSoftwareLLC/NightDriverStrip/discussions).
 
-More recently, a web installer has been added to the project with which most of the NightDriver projects can be flashed on supported devices, using nothing but a web browser. Please refer to the next section if this is how you'd like to get started.
+## What this fork adds
 
-## Project Overview
+**Boards**
 
-- It's an open-source project for controlling LED strips/matrices and doing cool effects on them
-- Uses WiFi for remote control and data reception.
-- Supports audio reactive effects.
-- Includes a web server and telnet debug server.
+- **Seeed XIAO ESP32-C5** (`xiao_c5`): a single-core RISC-V chip with
+  dual-band (5 GHz) WiFi. Its RMT peripheral can't stream long strips
+  reliably alongside WiFi, so four WS2812 strips are driven in parallel by its
+  PARLIO peripheral straight from a DMA buffer in PSRAM.
+- **Seeed XIAO ESP32-S3 / Sense on a custom carrier** (`xiao_sense`): four
+  strip outputs, the Sense's PDM microphone, IR receiver, coredump partition.
+- **Waveshare ESP32-S3-RGB-Matrix** (`waveshare_esp32s3_rgb_matrix_64x64`,
+  `_128x64`): chained 64 x 64 HUB75 panels (up to three), the onboard ES7210
+  microphone array and the ES8311 speaker. Fixes for its RAM limits, row
+  alignment, USB serial and a 32 fps ceiling.
 
-## Key Features
+**Strips and topology**
 
-- Multiple LED control methods (WS2812B, HUB75, etc.)
-- WiFi connectivity for remote control and data
-- Audio analysis for sound-reactive effects
-- OTA (Over-The-Air) updates
-- Debug console accessible via telnet and serial
-- Display support (OLED, TFT, LCD) for status information
-- NTP time synchronization so effects can span multiple ESP32s in sync
-- Configurable via web interface that runs on the ESP32
+- Each output channel is its own strip (with its own length) or matrix,
+  configured in the web UI and applied live, without a reboot.
+- A per-channel LED density (LEDs per meter), so effects can be sized in
+  real-world units.
+- Shortening a strip blanks the LEDs it gives up; effects draw each strip at
+  its own length (several heap overruns on uneven strips fixed).
+- A **Length Test** effect for finding each strip's exact LED count: the last
+  LED is white, with ruler ticks every 5 and 10 LEDs, and it follows the strip
+  length setting as you change it.
 
-## Using the Web Installer
+**LED-Central and multi-controller sync**
 
-### Introduction
+- Several senders at once, and per-channel remote feeds: strips fed by
+  LED-Central show its frames while the others keep running local effects,
+  without mixing the two.
+- Per-strip effects and frame rates (pin an effect to one strip).
+- **Clock sync for multi-controller effects.** A proper NTP client (round-trip
+  compensation, millisecond reply timing, quarter-offset steering) that syncs
+  to LED-Central's host while it sends frames and to the configured server
+  otherwise, and that keeps running while the strips are remote-driven. All
+  controllers stay within a few milliseconds of each other, and frames are
+  shown within about a millisecond of their timestamp.
+- The **Fire**, **CandyCane** and **Halloween** effects ported from
+  LED-Central, so a controller shows the same looks on its own.
 
-A web application has been made available that can be used to install the majority of NightDriver projects on supported devices. This will allow you to quickly flash a project on your ESP32 device, have it connect to WiFi and start using it without immediately having to work with the source code.
+**Running unattended**
 
-Note that the installer requires a browser that supports Web Serial. At the time of writing, browsers that include such support are recent versions of Chrome, Edge and Opera.
+- A nightly brightness schedule (dim, off and on times, with sunrise and
+  sunset worked out from a postal code without an API key).
+- WiFi watchdogs: rebuild the connection when the gateway goes silent while
+  WiFi still reports "connected", and reboot after a sustained WiFi loss, with
+  the reason in `/statistics`.
+- Crash reports over WiFi (`/api/v1/crash`), with every build's ELF archived
+  so a report can always be decoded.
+- IR remote power on/off; a speaker "warble" for alerts on the Waveshare
+  board; a true-random / pseudo-random setting for repeatable testing.
 
-### (Re)flashing your device with the Web Installer
+**Web UI and tools**
 
-Please follow these steps to flash and, if supported, set up WiFi on your device:
+- Per-strip length and topology settings, multi-strip frame preview, audio
+  telemetry (`/ws/audio` with per-band FFT magnitudes), per-effect brightness
+  and frame-rate overrides, network statistics, and the build time on the
+  Statistics tab.
+- `ota_all.sh` flashes every controller over WiFi; `tools/archive_elf.py`
+  keeps each build's ELF in `elf-archive/`.
 
-1. Connect your device to your computer with a USB cable.
+## Tested hardware
 
-2. Navigate to the following URL in your browser: <https://plummerssoftwarellc.github.io/NightDriverStrip>. It should then show a screen that looks like this:
-   ![Installer start screen](assets/installer-start.png)
+| Board | Build environment | Used as | What's attached |
+| - | - | - | - |
+| Seeed XIAO ESP32-C5 (8 MB flash, 8 MB PSRAM) | `xiao_c5`, `xiao_c5_ota` | deck1, deck2, garage1 | Up to 4 WS2812B-type strips on D7-D10 (GPIO 12, 8, 9, 10); deck strips about 216 LEDs at 60 LED/m, garage 2 x 120 |
+| Seeed XIAO ESP32-S3 Sense on a custom carrier (8 MB flash, 8 MB PSRAM) | `xiao_sense`, `xiao_sense_ota` | deck3, matrix-16x16 | Up to 4 strips on D7-D10 (GPIO 44, 7, 8, 9); deck3 3 x 108 LEDs at 30 LED/m; matrix-16x16 a 256-LED serpentine matrix; PDM microphone; IR receiver on D3 |
+| Waveshare ESP32-S3-RGB-Matrix (32 MB flash, 16 MB PSRAM) | `waveshare_esp32s3_rgb_matrix_64x64`, `_128x64` | Matrix-64x64, Matrix-128x64 | One or two chained 64 x 64 HUB75 panels; onboard microphones and speaker |
 
-3. Select your device (like "M5StickC Plus") from the drop-down list. A second drop-down with supported projects on that device will then appear.
+Strip builds are compiled for up to 1220 LEDs per channel and a 150 W power
+limit across the four outputs. The controllers run on 5 GHz (C5) and 2.4 GHz
+WiFi behind a Google Nest mesh, driven by LED-Central on a Raspberry Pi 4.
 
-4. Select the project you want to flash in the second drop-down. When you do, a CONNECT button will appear below it. Note that each project's label includes an indication of the key features enabled in the build in question. The legend for each of the feature letters is shown below the project drop-down.
+The other ~60 build environments come from upstream and are built, but not
+tested, in this fork. Dave's web installer
+(<https://plummerssoftwarellc.github.io/NightDriverStrip>) flashes upstream
+builds, not this fork's; see upstream's README for it.
 
-5. Click the CONNECT button. A dialog will apear asking you to select a serial port. Depending on your system, it may show only one or a list of them. In case multiple are shown, it'll generally be the one plainly called "USB Serial Port (COMn)". Select the correct port and click Connect.
+## Getting started
 
-6. A new dialog will show. One of the options it offers is "INSTALL &lt;project&gt; FOR &lt;device&gt;". Click that option.
+1. Install [PlatformIO](https://platformio.org/) (the VS Code extension or
+   PlatformIO Core). Nothing else is needed: the web UI is plain HTML/JS that
+   the build gzips and embeds.
+2. Copy `include/secrets.example.h` to `include/secrets.h` and put your WiFi
+   name and password in it.
+3. Build and flash over USB the first time, for example:
 
-7. A dialog will show asking you if you want to erase the device. Check the box if this is the first time you flash NightDriverStrip onto your device, or you want to flash a clean install. This will reset all settings to their defaults. Note that the WiFi configuration will be cleared whether you choose to erase or not. Click NEXT.
+   ```shell
+   pio run -e xiao_c5 -t upload
+   pio device monitor
+   ```
 
-8. You will now be asked to confirm you want to flash the device. Click INSTALL.
+4. Open the controller's IP address (or `http://<hostname>.local`) in a
+   browser. Set the hostname, location, strip count and each strip's length
+   on the Settings tab.
+5. After that, flash over WiFi: `pio run -e xiao_c5_ota -t upload` (set
+   `upload_port` in `platformio.ini`, or pass `--upload-port`), or
+   `./ota_all.sh` to build and flash every controller listed in it. A board
+   that is still USB-attached is safest flashed over USB.
 
-9. A dialog will appear showing you the progress of the installation. Usually, this will take about 2 minutes. When flashing has completed, click NEXT.
+## Configuring a controller
 
-10. At this point, four things can happen:
-    - The device reboots, and a dialog is shown to ask for WiFi connection  information. In this case you can skip to point 11.
-    - The device reboots and it supports WiFi, but the dialog to enter WiFi connection information is not shown. In this case, click on "LOGS & CONSOLE" and check that logging information is shown - please allow a few seconds for the first lines to appear. If and when they do, click BACK. You should now see an option to "CONNECT TO WI-FI". If so, click that option and skip to point 11.
-    - The device does not reboot, or the "CONNECT TO WI-FI" option is still not shown while WiFi is supported. In that case, power cycle or reset your device, and give it a few seconds to boot. Then reload your browser window and reconnect to your device by following steps 3 to 5 in these instructions, with the device connected to your computer with the USB cable. The "CONNECT TO WI-FI" option should now either be available, or appear when you open the "LOGS & CONSOLE" window until log lines appear, and then back out of it. Click the "CONNECT TO WI-FI" option when it shows.
-    - None of the above. In that case, please open an issue to let us know what you're experiencing.
+The Settings tab groups the device settings. The ones that matter most for
+these builds:
 
-    If your device does not support WiFi you can skip to point 12.
+- **Topology**: strip channel count, and per channel its shape (strip or
+  matrix), strip length or matrix size and wiring, and LEDs per meter.
+  Applied live. While the *Length Test* effect is playing, a strip length
+  change applies on every up/down arrow click.
+- **Output**: driver, color order and data pins (compiled defaults shown).
+- **Nightly schedule**: *Enable nightly schedule*, *Dim time*, *Dim to*,
+  *Off time* and *On time*. Times can follow sunrise and sunset worked out
+  from *Location* (a postal code is fine) or a fixed time.
+- **NTP server address**: the internet fallback; LED-Central's host is used
+  automatically while it is sending frames.
+- **True random numbers**: off makes local effects repeat exactly.
+- **Brightness**, **Power limit**, **Remember current effect** and the
+  remote's global colors.
 
-11. In the WiFi connection information dialog, select or enter your SSID and password. Click CONNECT. In some cases, the WiFi connection dialog appears again after a successful connection was actually made. In that case, click SKIP. It is also possible that a time-out is reported while WiFi has actually successfully connected. In that case, click BACK.
+## Using it with LED-Central
 
-12. Now, a dialog will appear that will show the details of the project you flashed. It will also provide options to flash again and show the device's logs & console. Furthermore, if your device supports WiFi then options will be available to visit the device's web application (provided the on-device web server is also enabled) or change the WiFi settings. Note that if you flashed a device image that includes the web server/web application, it may take a minute or so to come up after the connection to the WiFi network has been made.
+LED-Central sends timestamped frames to port 49152; each channel it feeds
+shows those frames, and channels it doesn't feed keep running local effects.
+When LED-Central stops, the controller falls back to its own effects. The
+controller reports its strip lengths, LED densities, microphone, nightly
+schedule state and clock sync in `/statistics`, which LED-Central reads. Run
+`setup-linux.sh` from LED-Central on its host so the controllers can sync
+their clocks to it.
 
-### Reconfiguring WiFi using the Web Installer
+## Diagnostics
 
-If you want to change the WiFi configuration on an already flashed device, use the following steps:
+- **`/statistics`** (JSON) includes, besides memory, CPU and frame rates:
+  `ACTIVE_STRIP_LENGTHS`, `ACTIVE_LEDS_PER_METER`, `RESET_REASON`,
+  `UPTIME_SECONDS`, `WIFI_RSSI`, `WIFI_DISCONNECTS`, `WIFI_STALL_RECONNECTS`,
+  `WIFI_WATCHDOG_REBOOTS` and `WIFI_WATCHDOG_LAST_REASON`, `SCHEDULE_STATE`,
+  `NTP_SOURCE`, `NTP_SERVER`, `NTP_OFFSET_MS`, `NTP_ROUND_TRIP_MS`,
+  `CRASH_PRESENT` and `BUILD_TIMESTAMP`. See [REST_API.md](REST_API.md).
+- **Crash reports.** After a panic, `GET /api/v1/crash` gives the reset
+  reason and a summary (an Xtensa backtrace on the S3), `/api/v1/crash/raw`
+  the whole core dump, and `POST /api/v1/crash/clear` removes it. Decode a
+  dump with the ELF in `elf-archive/` whose name matches the summary's
+  `elfSha256` (`addr2line` on the S3; `esp_coredump` with the RISC-V GDB on
+  the C5). In this fork's experience a panic inside the output code
+  (`PostProcessFrame`, `Show`) usually means something wrote past a strip's
+  pixel buffer: look for the writer, not the victim.
 
-1. Connect your device to your computer with a USB cable.
+## Effects
 
-2. Navigate to the following URL in your browser: <https://plummerssoftwarellc.github.io/NightDriverStrip>.
-
-3. Select your device (like "M5StickC Plus") from the drop-down list. A second drop-down with supported projects on that device will then appear.
-
-4. Select the project you flashed earlier, in the second drop-down. When you do, a CONNECT button will appear below it.
-
-5. Click the CONNECT button. A dialog will apear asking you to select a serial port. Depending on your system, it may show only one or a list of them. In case multiple are shown, it'll generally be the one plainly called "USB Serial Port (COMn)". Select the correct port and click Connect.
-
-6. A new dialog will show. If it does not yet show the "CONNECT TO WI-FI" or "CHANGE WI-FI" options, open the "LOGS & CONSOLE" window, and wait until log lines appear. Then close the window by clicking BACK.
-   When the "CONNECT TO WI-FI" or "CHANGE WI-FI" option is shown, click it.
-
-7. In the WiFi connection information dialog, select or enter your SSID and password. Click CONNECT. In some cases, the WiFi connection dialog appears again after a successful connection was actually made. In that case, click SKIP. It is also possible that a time-out is reported while WiFi has actually successfully connected. In that case, click BACK.
-
-## Beyond the Web Installer
-
-The images included in the installer are built using the current state of the source code in this repository. If there's anything you'd like to change in (the configuration of) the project you want to use, then it is time to move to the next stage.
-
-As the next stage will quite quickly require some knowledge of the structure of the application that is NightDriverStrip, this may be a good time to read the [Introduction to the NightDriverStrip codebase](./CODEBASE_INTRO.md).
+[EFFECTS.md](EFFECTS.md) describes the effect sets, the effects in the DEMO
+set these boards run, and the matrix effects.
 
 ## Device web UI and API
 
@@ -155,34 +234,6 @@ More information about the web UI can be found [in its own README.md](site/READM
 
 Besides the web UI, the webserver also publishes a REST-like API. Amongst others, a range of configuration settings can be read and changed using it.
 More information about the API is available in [REST_API.md](./REST_API.md).
-
-## Getting started with the source code
-
-I recommend you do the following:
-
-- Copy include/secrets.example.h to include/secrets.h; Set your WiFi SSID and password in include/secrets.h.
-- Build the source code. In particular, build the `DEMO` configuration. Some pointers on what's needed to do this can be found [below](#build-pointers).
-- Upload the resultant binary to the ESP32
-- Connect the wire associated with LED_PIN0 in your include/globals.h and GND and 5V of a WS2812B strip to the ESP32. For
-  example, this will be Pin 5 for ATOMLIGHT, but even for DEMO, may be Pin 32 for M5STICKC, M5STICKCPLUS, or M5STACKCORE2
-  or 21 for the LILYGOTDISPLAYS3.
-- Provide an adequate power source for the LEDs and ESP32
-- Enjoy the pretty lights
-- Start enabling features in the `globals.h` or platformio.ini file like WiFi and WebServer. See [Feature Defines](#feature-defines) below.
-- Connect to the ESP32's web user interface with a browser to its IP address
-
-## Wifi setup
-
-Ensure your WiFi SSID and password are set in include/secrets.h, which can be created by making a copy of include/secrets.example.h.<br/>
-Please do make sure you set them in include/secrets.h, NOT in include/secrets.example.h!
-
-Enable WiFi by setting the ENABLE_WIFI define to 1 in globals.h.
-
-```C++
-#define ENABLE_WIFI 1
-```
-
-This can also be configured in the platformio.ini file, as described in the [Feature Defines](#feature-defines) section below.
 
 ## Feature defines
 
@@ -258,7 +309,7 @@ Note that Power OFF on strip builds is a local-effect power state, not a hardwar
 To add new effects, you:
 
 1. Create a header for your effect in `include/effects/strip/` (or `include/effects/matrix/` for HUB75 effects), and derive from `EffectWithId<YourEffect>` - the CRTP base - or from an existing effect class. The good stuff happens in the only important function, `Draw()`.
-Check out what the built-in effects do, but in short you're basically drawing into an array of CRGB objects that each represent a 24-bit color triplet. Once you're done, the CRGB array is sent to the LEDs and you are asked for the next frame immediately. Your draw method should take somewhere around 30ms, ideally, and should `delay()` to sleep for the balance if it's quicker. You **can** draw repeatedly basically in a busy loop, but its not needed.
+Check out what the built-in effects do, but in short you're basically drawing into an array of CRGB objects that each represent a 24-bit color triplet. Once you're done, the CRGB array is sent to the LEDs. The draw loop calls `Draw()` at the rate your effect asks for by overriding `DesiredFramesPerSecond()` (30 by default), so there is no need to `delay()` inside it. Draw each channel at its own size (`GetLEDCount()` on that channel's GFX object): in individual-strips mode the channels can have different lengths, and writing channel 0's length into a shorter channel overruns its buffer.
 2. You do not need to pick an effect number. `EffectWithId<YourEffect>` derives a stable `EffectId` automatically by hashing your class's type name at compile time (see `_effect_id_detail::token_id_for_type` in `include/ledstripeffect.h`), so IDs can't collide by accident and there is nothing to register in `effects.h`. That file now only holds the shared JSON property-name defines.
 3. Register your class in the `LoadEffectFactories()` function in `src/effects.cpp`, inside the `EFFECTS_*` effect-set block(s) that should include it. Registration uses `RegisterAll()` with one `Effect<YourEffect>(...)` entry per instance; anything you pass is forwarded to the effect's constructor:
 
@@ -273,13 +324,13 @@ Check out what the built-in effects do, but in short you're basically drawing in
 
     Wrap an entry in `Disabled(...)` if it should be registered but not enabled by default. Which `EFFECTS_*` set a given build gets is decided by the `-DEFFECTS_...` flag in that environment's `build_src_flags` in `platformio.ini`.
 
-There is a global `EffectManager` instance that first creates the effect table from a JSON file on SPIFFS, if present. Then it adds any other effects that are registered in `LoadEffectFactories()` but not included in the JSON file. It then rotates amongst those effects at a rate controlled by `DEFAULT_EFFECT_INTERVAL`. Effects are not notified when they go active or not, they're just asked to draw when needed.
+There is a global `EffectManager` instance that creates the effect table from a JSON file on SPIFFS, if one is present and was written for the same effect set; if the registered effects have changed (new firmware with a different list), the saved table is discarded and the defaults from `LoadEffectFactories()` are used. It then rotates amongst the enabled effects at a rate controlled by `DEFAULT_EFFECT_INTERVAL`, skipping manual-only effects (those whose `IsManualOnly()` returns true, like Length Test). Effects get a `Start()` call when they become active and are then asked to draw when needed.
 
 Each channel of LEDs has its own `GFXBase`-derived instance (a `WS281xGFX` for WS281x strips, `HUB75GFX` for matrices). Channel 0 is the one associated with `LED_PIN0`, and so on. Inside an effect you reach them through the effect manager: `g_ptrSystem->GetEffectManager().g(0)` is channel 0's graphics object, its pixel buffer is the public `leds` member, and it holds `GetLEDCount()` pixels. You can draw into the buffer without ever touching the raw bytes by calling `fill_solid`, `fill_rainbow`, `setPixel`, and other drawing functions.
 
-The simplest configuration, `DEMO`, assumes you have a single meter strip of 144 LEDs and a power supply connected to your ESP32. It boots up, finds a single `RainbowFillEffect` in the `LoadEffectFactories()` function, and repeatedly calls its `Draw()` method to update the CRGB array before sending it out to the LEDs. If working correctly it should draw a scrolling rainbow palette on your LED strip.
+The `DEMO` effect set, which the XIAO builds in this fork use, registers about twenty strip effects: fires, bouncing balls, meteors, twinkling stars, palettes, white light, the LED-Central ports and Length Test (see [EFFECTS.md](EFFECTS.md)). The simplest set, `MINIMAL`, is just a status indicator and a rainbow fill.
 
-That simplest configuration, called here simply 'DEMO', is provided by a board specific build environment. The list of such environments can be seen by running 'python3 tools/show_envs.py', which would tell the reader that, as of this writing, hardware specific variations of 'DEMO' include:
+The `DEMO` configuration is provided by a number of board specific build environments. The list of such environments can be seen by running 'python3 tools/show_envs.py', which would tell the reader that, as of this writing, hardware specific variations of 'DEMO' include:
 
 - demo
 - m5demo
@@ -294,9 +345,9 @@ to pio or in a menu option inside the PlatformIO IDE/VS Code.
 
 ## Notes on JSON persistence
 
-The effects table is persisted to a JSON file on SPIFFS at regular intervals, to retain the state of effects (and in fact the whole effect list) across reboots. This is largely in preparation for future updates to NightDriverStrip, where the composition of the effect list configuration of individual effects can be changed using the device web application. The API endpoints to facilitate this are already available and ready for use (see [Device web UI and API](#device-web-ui-and-api), below.)
+The effects table is persisted to a JSON file on SPIFFS at regular intervals, to retain the state of effects (and in fact the whole effect list) across reboots. The device web application uses this to let you enable, disable, reorder, copy, rename and configure effects (see [Device web UI and API](#device-web-ui-and-api)).
 
-This makes that an override of `SerializeToJSON()` and a corresponding deserializing constructor must be provided for effects that need (or want) to persist more than the properties that are (de)serialized from/to JSON by `EffectWithId` (which derives from `LEDStripEffect`) by default.
+This makes that an override of `SerializeToJSON()` and a corresponding deserializing constructor must be provided for effects that need (or want) to persist more than the properties that are (de)serialized from/to JSON by `EffectWithId` (which derives from `LEDStripEffect`) by default. Don't reuse the base class's keys for your own properties: `LEDStripEffect` writes `en`, `ce`, `fn`, `es` (enabled), `mt`, `mi`, `bo` and `fo`, and a clash silently corrupts that property on the next boot (this fork's Halloween effect once saved its eye size as `es` and came back disabled after every reboot).
 
 Throughout the project, the library used for JSON handling and (de)serialization is [ArduinoJson](https://arduinojson.org/). Among others, this means that `SerializeToJSON()` functions _must_ return `true` _except_ when an ArduinoJson function (like `JsonObject::set()`) returns `false` to indicate it ran out of buffer memory.
 
@@ -312,7 +363,7 @@ The reset can be done by performing an HTTP form POST to http://&lt;device_IP&gt
 curl -d "effectsConfig=1&board=1" -X POST http://<device_IP>/reset
 ```
 
-It's possible that the ability to perform this reset is added in a future update to the web UI.
+The web UI's **Reset Effect Config** button does the same.
 
 Furthermore, it's also possible to "ignore" the persisted effect list altogether and always load the standard effects list at startup. Documentation on how to do this is available towards the top of the aforementioned `LoadEffectFactories()` function.
 
@@ -352,7 +403,7 @@ python tools/show_envs.py
 
 Note that running `pio run` **without** `-e` does *not* build everything: `platformio.ini` sets `default_envs` in its `[platformio]` section, and that single environment is what gets built. Change `default_envs` if you'd rather have a different project be your default, or always pass `-e`.
 
-To actually build every available configuration (this takes a while - see [Time it takes to build this project](#time-it-takes-to-build-this-project)), use:
+To actually build every available configuration (this takes a while; upstream's README lists build times on various machines), use:
 
 ```ShellConsole
 python tools/build_all.py
@@ -418,8 +469,8 @@ Write something simple to send color data to the socket. The format is very basi
 | 2, 3    | ChannelID | _(Set it to 1 for single channel, though 0 works too for historical reasons)_ |
 | 4 - 7   | Length    | _(Number of 24-bit `PIXELS` being set)_                                       |
 | 8 - 15  | Seconds   | _(Set it to 0)_                                                               |
-| 16 - 24 | Micros    | _(Set it to 0)_                                                               |
-| 25+     | RGB       | _(24-bit RGB color data, one per `PIXEL` specified in Length above)_          |
+| 16 - 23 | Micros    | _(Set it to 0)_                                                               |
+| 24+     | RGB       | _(24-bit RGB color data, one per `PIXEL` specified in Length above)_          |
 
 If built with `ENABLE_WIFI` and `INCOMING_WIFI_ENABLED`, if the chip is able to get a WiFi connection and DHCP address it will open a socket on port 49152 and wait for packets formed as described above.
 
@@ -428,6 +479,8 @@ If built with `ENABLE_WIFI` and `INCOMING_WIFI_ENABLED`, if the chip is able to 
 Generate a series of 24 frames per second (or 30 if under 500 LEDs) and set the timestamp to "Now" plus 1/2 a second. Send them to the chip over WiFi and they will be drawn 1/2 second from now in a steady stream as the timestamps you gave each packet come due.
 
 ## Sample parts (Plummer's Software LLC Amazon affiliate links)
+
+_This section and the next are Dave Plummer's, from the upstream README._
 
 - BTF-Lighting WS2812B Strip, 144 pixels per meter, white: [Amazon.com](https://amzn.to/3CtZW2g)
 - BTF-Lighting WS2812B Strip, 144 pixels per meter, black: [Amazon.com](https://amzn.to/39ljqcO)
@@ -452,53 +505,3 @@ Next, let's consider `#define`s to control the build. There may be better and mo
 A lifetime of coding has taught me to err on the side of simplicity, so please don't introduce variadic template constructs unless they demonstrably shrink the source code. Anything that grows the complexity AND length of the code should be suspect.
 
 Add whatever you want and/or need to make your LED dreams come true. Fix my blunders. Fill in the obvious gaps in my knowledge. Whatever has the most blinken for the fewest bits get my vote. You only get so much additional cool blinken for every byte of code and program. That return is measured in BlinkenPerBit, the amount of blinking awesomeness the code adds divided by the impact on the source (and binary).
-
-## Time it takes to build this project
-
-To replicate, build the mesmerizer project.  Then delete pio/build_cache and build again, taking the time for the second build.
-
-- ASUS 7995WX [96-core, 192-thread]
-  -> [davepl, 02/11/2024] 20.73 seconds
-
-- HP Z6 G5A, 7995WX, 128GB [96-core, 192-thread]
-  -> [davepl 11/29/2023] 25.270 seconds
-
-- 3970X, 128GB [32-core, 64-thread] Windows11+WSL2/Ubuntu02.04LTS
-  -> [davepl 11/29/2023] 34.292 seconds
-
-- Mac M1 Ultra Studio [10-core, 20-thread]
-  -> [davepl 11/29/2023] 48.368 seconds
-
-## Old Build times, no longer relevant with current platformio, just historical curiosity
-
-Time to build the SPECTRUM config (`pio run -e spectrum`). Assumes a clean build after everything has been installed and downloaded.
-
-- AMD 3970 32-cores, 128GB, RAID SSD
-  -> [davepl 09/19/2021] 12.93 seconds (Running Under WSL)
-
-- AMD 5950X 16-cores, 64GB, SSD
-  -> [davepl 09/19/2021] 16.90 seconds
-
-- Apple MacBook Pro M1 MAX, 8+2 cores, 64GB, 4TB SSD
-  -> [davepl 12/15/2021] 20.90 seconds
-
-- Apple MacBook Air M2, 16GB, 256GB SSD
-  -> [vaaski 02/28/2023] 56.17 seconds
-
-- MacBook Pro 2020, 8 Cores 2.4GHz i9, 64GB, 4TB SSD
-  -> [davepl 09/19/2021] 34.09 seconds
-
-- Mac Mini, 4 Perf cores, 16GB
-  -> [davepl 09/19/2021] 39.06 seconds
-
-- Mac Pro, 6 cores, 3.5 GHz, 64GB, 1TB SSD
-  -> [davepl 09/19/2021] 48.42 seconds
-
-- Xeon Silver, 20 cores, 2.1GHz, 16GB VM
-  -> [davepl 10/10/2022] 53.11 seconds
-
-- Raspberry Pi 4, 64-bit Ubuntu LTS, 4 core, 4GB
-  -> [davepl 09/23/2021] 6 min 25 seconds
-
-- Jetson Nano 2G, 4 Core ARM A57
-  -> [davepl 10/04/2021] 2 min 56 seconds

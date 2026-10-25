@@ -23,11 +23,14 @@
   - [Unified device settings](#unified-device-settings)
   - [Get effect setting specifications](#get-effect-setting-specifications)
   - [Effect settings](#effect-settings)
+  - [Crash reports](#crash-reports)
+  - [Speaker warble](#speaker-warble)
   - [Reset configuration and/or device](#reset-configuration-andor-device)
 - [Postman collection](#postman-collection)
 - [WebSockets](#websockets)
   - [Effect events](#effect-events)
   - [Color data](#color-data)
+  - [Audio telemetry](#audio-telemetry)
 
 ## Introduction
 
@@ -62,7 +65,7 @@ This endpoint returns a JSON document with basic information about the effects o
 | URL | `/effects` | |
 | Method | GET | |
 | Parameters | | |
-| Response | 200 (OK) | A JSON blob with information about the device's effect list. The zero-based effect indexes used in other endpoints correspond with the indexes in this list. |
+| Response | 200 (OK) | A JSON blob with information about the device's effect list. The zero-based effect indexes used in other endpoints correspond with the indexes in this list. Each effect has `name`, `enabled` and `core`; a manual-only effect (such as Length Test, which rotation never picks or leaves) also has `"manualOnly": true`. |
 
 ### Set current effect
 
@@ -235,6 +238,24 @@ This set of endpoints can be used to retrieve device statistics from the device.
 | Method | GET | |
 | Parameters | | |
 | Response | 200 (OK) | A JSON blob with all device statistics, i.e. the combination of the static and dynamic ones. |
+
+#### Notable fields
+
+Besides chip, memory, CPU and frame-rate figures, the statistics include:
+
+| Field | Meaning |
+| - | - |
+| `ACTIVE_STRIP_LENGTHS`, `ACTIVE_LEDS_PER_METER` | Each channel's configured LED count and density (0 = unknown) |
+| `ACTIVE_LAYOUT`, `ACTIVE_MATRIX_WIDTH`, `ACTIVE_MATRIX_HEIGHT`, `ACTIVE_OUTPUT_DRIVER` | Current topology and output driver |
+| `BUILD_TIMESTAMP` | When the running firmware was compiled |
+| `UPTIME_SECONDS`, `RESET_REASON` | Time since boot, and why it last restarted (ESP-IDF `esp_reset_reason()`: 1 power-on, 3 software, 4 panic, ...) |
+| `CRASH_PRESENT` | A core dump is stored; see [Crash reports](#crash-reports) |
+| `WIFI_RSSI`, `WIFI_DISCONNECTS`, `WIFI_LAST_DISCONNECT_REASON` | Signal and disconnect history |
+| `WIFI_STALL_RECONNECTS`, `WIFI_GATEWAY_REPLY_AGE_MS` | Times the gateway went silent while WiFi still reported "connected", forcing a reconnect; age of the last gateway ping reply |
+| `WIFI_WATCHDOG_REBOOTS`, `WIFI_WATCHDOG_LAST_REASON` | Reboots after a sustained WiFi loss and the disconnect reason (1000 = gateway silent) |
+| `SCHEDULE_STATE`, `SCHEDULE_DIM_FACTOR` | Nightly schedule: `normal`, `dim` or `off`, and the dim factor (255 = normal) |
+| `NTP_SOURCE`, `NTP_SERVER`, `NTP_OFFSET_MS`, `NTP_ROUND_TRIP_MS` | The last clock sync: `led-central` (the host sending frames) or `server`, its address, the measured offset (positive = this clock was behind) and the round trip |
+| `PACKETS_RX`, `PACKETS_TX`, `PACKETS_LOST_OR_RETRIED` | Incoming frame socket counters |
 
 ### Get device setting specifications
 
@@ -446,6 +467,20 @@ When a controller panics, ESP-IDF saves a core dump to the `coredump` flash part
 | | 400 (Bad Request) | `confirm=yes` was not given. |
 
 `elfSha256` is a prefix of the crashed firmware's ELF SHA-256 (its length depends on the chip's build config: 9 hex digits on the ESP32-C5, 16 on the ESP32-S3). Every build archives its ELF as `elf-archive/<env>-<full sha256>.elf` (`tools/archive_elf.py`), so `ls elf-archive/*-<elfSha256>*.elf` finds the one to decode with, even after later rebuilds.
+
+### Speaker warble
+
+On builds with an audio codec and speaker (the Waveshare ESP32-S3-RGB-Matrix board), rings an alert warble, e.g. for a weather alert from LED-Central.
+
+| Property | Value | Explanation |
+| - | - | - |
+| URL | `/speaker/warble` | |
+| Method | POST | |
+| Parameters | `seconds` | Optional, 1-60, default 12. |
+| | `volume` | Optional, 0-100, default 100. |
+| Response | 202 (Accepted) | The warble has started; it plays on its own task. |
+| | 409 (Conflict) | A warble is already playing. |
+| | 404 (Not Found) | This build has no speaker. |
 
 ### Reset configuration and/or device
 

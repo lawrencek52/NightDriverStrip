@@ -16,6 +16,7 @@
   - [Code Startup](#code-startup)
   - [Event loop](#event-loop)
   - [Main drawing loop](#main-drawing-loop)
+- [Changes in this fork](#changes-in-this-fork)
 - [Memory management and performance](#memory-management-and-performance)
 - [Testing and validation](#testing-and-validation)
 - [Collaboration and documentation](#collaboration-and-documentation)
@@ -148,6 +149,17 @@ Within this loop, the `EffectManager`'s `Update()` method is called, which in tu
 - **Effect classes**: Each of the effect classes, as present in the various files in the [include/effects](./include/effects/) subfolders, represents a single effect that can be applied to the LED display. All effect classes, including those targeting LED matrices, eventually derive from the `LEDStripEffect` class as found in [ledstripeffect.h](./include/ledstripeffect.h) and [ledstripeffect.cpp](./src/ledstripeffect.cpp).
 Each effect has its own implementation of the `Draw()` method, which defines how the effect should be rendered on the LED display. This method is called by the `EffectManager` when it's time to render the effect.
 
+## Changes in this fork
+
+The lawrencek52 fork (see the [README](./README.md#what-this-fork-adds)) changed a few of these components:
+
+- **Per-channel topology** ([deviceconfig.h](./include/deviceconfig.h), [systemcontainer.cpp](./src/systemcontainer.cpp), [ws281xgfx.cpp](./src/ws281xgfx.cpp)): every output channel has its own shape (strip or matrix), length or dimensions, and LED density. A live topology change resizes each channel's `GFXBase` buffer and re-applies the `WS281xOutputManager` without a reboot. Draw each channel at its own `GetLEDCount()`; the channels are not all the same length.
+- **WS281x transports** ([ws281xoutputmanager.cpp](./src/ws281xoutputmanager.cpp)): RMT on ESP32 and ESP32-S3; on the ESP32-C5, whose RMT can't DMA, a PARLIO transport sends all strips in parallel from one DMA frame in PSRAM.
+- **Remote frames per channel** ([drawing.cpp](./src/drawing.cpp), [socketserver.cpp](./src/socketserver.cpp)): the socket server serves several senders; each channel shows remote frames while they keep arriving and local effects otherwise, without mixing. The draw loop sleeps until the next buffered frame's timestamp, to the millisecond.
+- **Per-channel playback** ([effectmanager_playback.cpp](./src/effectmanager_playback.cpp)): an effect can be pinned to one strip (a clone per channel) with its own frame rate. Manual-only effects (`LEDStripEffect::IsManualOnly()`) are skipped by rotation.
+- **Clock sync** ([ntptimeclient.cpp](./src/ntptimeclient.cpp)): a four-timestamp NTP client that steers a quarter of the measured offset per sync, using the host that is sending frames as its server. Its `NetworkReader` entry runs even while effect readers are paused for remote driving.
+- **Unattended operation** ([network.cpp](./src/network.cpp), [webserver_crash.cpp](./src/webserver_crash.cpp)): WiFi stall and loss watchdogs, crash reports over WiFi, and the nightly brightness schedule applied in `PostProcessFrame()` after both local and remote frames.
+
 ## Memory management and performance
 
 Given the real-time nature of LED displays, performance is paramount. The codebase makes extensive use of dynamic memory allocation, with a preference for PSRAM memory when available.
@@ -173,4 +185,4 @@ You may also find that some existing documentation is somewhat incomplete or no 
 
 Now that you've been introduced to the NightDriverStrip codebase, the next best thing to spend some time on reading is the NightDriverStrip source code! Browse through the source files mentioned in this document, and don't hold back on inspecting others as well. If you come across things that are hard to follow or don't seem to make sense, then please open a Q&A post in the [Discussions section](https://github.com/PlummersSoftwareLLC/NightDriverStrip/discussions) in this repository. The questions asked there will help others when answered, and can also provide pointers to gaps in the documentation that's currently in place.
 
-Once you feel sufficiently comfortable with the code you're looking at, you can continue your journey with the [Getting started with the source code](./README.md#getting-started-with-the-source-code) section in the main README.
+Once you feel sufficiently comfortable with the code you're looking at, you can continue your journey with the [Getting started](./README.md#getting-started) section in the main README.
