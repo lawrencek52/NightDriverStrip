@@ -58,6 +58,21 @@ extern "C"
     #include "uzlib/src/uzlib.h"
 }
 
+static std::atomic<uint32_t> l_lastFrameSender   = 0;
+static std::atomic<uint32_t> l_lastFrameSenderMs = 0;
+
+void RecordFrameSender(uint32_t ipv4)
+{
+    l_lastFrameSender   = ipv4;
+    l_lastFrameSenderMs = millis();
+}
+
+bool GetRecentFrameSender(uint32_t& ipv4, uint32_t maxAgeMs)
+{
+    ipv4 = l_lastFrameSender;
+    return ipv4 != 0 && millis() - l_lastFrameSenderMs <= maxAgeMs;
+}
+
 #if INCOMING_WIFI_ENABLED
 
 namespace
@@ -405,6 +420,7 @@ void SocketServer::AcceptNewConnection(int listen_fd)
     slot->fd             = fd;
     slot->cbReceived     = 0;
     slot->lastActivityMs = millis();
+    slot->peerAddr       = addr.sin_addr.s_addr;
 
     debugI("Incoming connection from: %s (%zu of %zu slots in use)", inet_ntoa(addr.sin_addr), CountActiveClients(), MAX_CLIENTS);
 }
@@ -551,6 +567,7 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
         }
 
         // The channel lives in the packet that was compressed, not the wrapper.
+        RecordFrameSender(client.peerAddr);
         SendResponsePacket(client.fd, ResponseChannelFor(_abOutputBuffer.get(), expandedSize));
         return true;
     }
@@ -570,7 +587,10 @@ bool SocketServer::ProcessCompletePacket(ClientConnection& client, size_t packet
 
     // Peak data is fire and forget; only pixel frames are acknowledged.
     if (command16 == WIFI_COMMAND_PIXELDATA64)
+    {
+        RecordFrameSender(client.peerAddr);
         SendResponsePacket(client.fd, ResponseChannelFor(client.buffer.get(), packetSize));
+    }
 
     return true;
 }

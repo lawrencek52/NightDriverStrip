@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <AsyncJson.h>
+#include <cmath>
 #include <cstdlib>
 #include <esp_timer.h>
 #include <FS.h>
@@ -48,6 +49,7 @@
 #include "gfxbase.h"
 #include "improvserial.h"
 #include "nd_network.h"
+#include "ntptimeclient.h"
 #include "socketserver.h"
 #include "soundanalyzer.h"
 #include "systemcontainer.h"
@@ -477,6 +479,16 @@ void CWebServer::GetStatistics(AsyncWebServerRequest * pRequest, StatisticsType 
             j["PACKETS_RX"]             = packetStats.received;
             j["PACKETS_TX"]             = packetStats.sent;
             j["PACKETS_LOST_OR_RETRIED"] = packetStats.lostOrRetried;
+        #endif
+
+        #if ENABLE_NTP
+            // The last clock sync: against LED-Central's host or the configured server, and the
+            // offset it measured (positive = this clock was behind) before steering a quarter of it.
+            j["NTP_SOURCE"]        = !NTPTimeClient::HasClockBeenSet() ? "unset"
+                                   : NTPTimeClient::LastSyncWasLocal() ? "led-central" : "server";
+            j["NTP_SERVER"]        = NTPTimeClient::LastServer();
+            j["NTP_OFFSET_MS"]     = std::round(NTPTimeClient::LastOffsetMs() * 10) / 10;
+            j["NTP_ROUND_TRIP_MS"] = std::round(NTPTimeClient::LastRoundTripMs() * 10) / 10;
         #endif
     }
 

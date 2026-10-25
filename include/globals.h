@@ -173,6 +173,7 @@ extern std::recursive_mutex g_effect_manager_mutex;
 
 #define FASTLED_INTERNAL        1       // Silence FastLED build banners
 #define NTP_DELAY_SECONDS       (5*60)  // delay count for NTP update, in seconds
+#define NTP_LOCAL_DELAY_SECONDS 60      // NTP update interval while syncing to LED-Central's host
 #define NTP_DELAY_ERROR_SECONDS 30      // delay count for NTP updates if no time was set, in seconds
 #define NTP_PACKET_LENGTH       48      // ntp packet length
 

@@ -89,6 +89,15 @@ inline size_t FirstChannelInMask(uint16_t channel16)
 
 bool ProcessIncomingData(allocated_unique_ptr<uint8_t []> & payloadData, size_t payloadLength);
 
+// RecordFrameSender / GetRecentFrameSender
+//
+// The IPv4 address (network byte order) of whoever last sent this device a frame, and whether
+// that was within maxAgeMs. NTPTimeClient syncs to that host (LED-Central) while it is actively
+// driving the strips, since its clock is the one the frame timestamps come from.
+
+void RecordFrameSender(uint32_t ipv4);
+bool GetRecentFrameSender(uint32_t& ipv4, uint32_t maxAgeMs);
+
 #if INCOMING_WIFI_ENABLED
 
 // SocketResponse
@@ -165,6 +174,7 @@ private:
         allocated_unique_ptr<uint8_t []> buffer;
         size_t                           cbReceived     = 0;   // Bytes of the in-flight packet held so far
         uint32_t                         lastActivityMs = 0;   // millis() at the last successful read
+        uint32_t                         peerAddr       = 0;   // IPv4, network byte order
 
         bool InUse() const { return fd >= 0; }
     };

@@ -29,6 +29,8 @@
 //---------------------------------------------------------------------------
 
 #include "globals.h"
+#include <cmath>
+#include <cstring>
 #include <ctime>
 #include <mutex>
 #include <sys/time.h>
@@ -38,6 +40,7 @@
 #include "deviceconfig.h"
 #include "ledbuffer.h"
 #include "ntptimeclient.h"
+#include "socketserver.h"
 #include "systemcontainer.h"
 #include "values.h"
 
@@ -58,9 +61,140 @@ bool NTPTimeClient::HasClockBeenSet()
     return l_bClockSet;
 }
 
+// NTP wire timestamps are seconds since 1900 as a 32.32 fixed-point number.
+
+static constexpr double kNtpToUnixSeconds = 2208988800.0;
+
+static double NowSeconds()
+{
+    timeval tv;
+    gettimeofday(&tv, nullptr);
+    return tv.tv_sec + tv.tv_usec / (double) MICROS_PER_SECOND;
+}
+
+static double NtpTimestampToUnix(const uint8_t* p)
+{
+    const uint32_t seconds  = (uint32_t) p[0] << 24 | (uint32_t) p[1] << 16 | (uint32_t) p[2] << 8 | p[3];
+    const uint32_t fraction = (uint32_t) p[4] << 24 | (uint32_t) p[5] << 16 | (uint32_t) p[6] << 8 | p[7];
+    return seconds - kNtpToUnixSeconds + fraction / 4294967296.0;
+}
+
+static void UnixToNtpTimestamp(double unixSeconds, uint8_t* p)
+{
+    const double ntp = unixSeconds + kNtpToUnixSeconds;
+    const uint32_t seconds  = (uint32_t) ntp;
+    const uint32_t fraction = (uint32_t) ((ntp - seconds) * 4294967296.0);
+    for (int i = 0; i < 4; i++)
+    {
+        p[i]     = seconds  >> (24 - 8 * i);
+        p[4 + i] = fraction >> (24 - 8 * i);
+    }
+}
+
+// QueryNtpServer
+//
+// One standard NTP exchange. With t1 = our send time, t2/t3 = the server's receive/transmit
+// times, and t4 = our receive time, the clock offset is ((t2 - t1) + (t3 - t4)) / 2, which
+// cancels the network delay as long as it's about the same both ways. The reply is polled for
+// every millisecond so t4 is accurate, and must echo our transmit timestamp so a stale reply
+// to an earlier request can't be mistaken for this one.
+
+static bool QueryNtpServer(WiFiUDP* pUDP, const IPAddress& server, double& offset, double& roundTrip)
+{
+    constexpr uint32_t kReplyTimeoutMs = 1500;
+
+    while (pUDP->parsePacket() != 0)
+        #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+            pUDP->clear();
+        #else
+            pUDP->flush();
+        #endif
+
+    uint8_t packet[NTP_PACKET_LENGTH] = {};
+    packet[0] = 0b00100011;                     // leap 0, version 4, mode 3 (client)
+
+    const double t1 = NowSeconds();
+    UnixToNtpTimestamp(t1, &packet[40]);
+
+    if (!pUDP->beginPacket(server, 123) || pUDP->write(packet, NTP_PACKET_LENGTH) != NTP_PACKET_LENGTH || !pUDP->endPacket())
+    {
+        debugW("NTP: could not send request to %s", server.toString().c_str());
+        return false;
+    }
+
+    const uint32_t sentMs = millis();
+    while (!pUDP->parsePacket())
+    {
+        if (millis() - sentMs > kReplyTimeoutMs)
+        {
+            debugW("NTP: no reply from %s", server.toString().c_str());
+            return false;
+        }
+        delay(1);
+    }
+    const double t4 = NowSeconds();
+
+    uint8_t reply[NTP_PACKET_LENGTH];
+    if (pUDP->read(reply, NTP_PACKET_LENGTH) != NTP_PACKET_LENGTH)
+        return false;
+
+    const uint8_t mode    = reply[0] & 0x07;
+    const uint8_t stratum = reply[1];
+    if (mode != 4 || stratum == 0 || stratum > 15 || memcmp(&reply[24], &packet[40], 8) != 0)
+    {
+        debugW("NTP: ignoring bad reply from %s (mode %u, stratum %u)", server.toString().c_str(), mode, stratum);
+        return false;
+    }
+
+    const double t2 = NtpTimestampToUnix(&reply[32]);
+    const double t3 = NtpTimestampToUnix(&reply[40]);
+    offset    = ((t2 - t1) + (t3 - t4)) / 2;
+    roundTrip = (t4 - t1) - (t3 - t2);
+    return roundTrip >= 0;
+}
+
+// Best of a few exchanges: the one with the shortest round trip had the least queuing delay
+// in it, so its offset is the most trustworthy.
+
+static bool MeasureOffset(WiFiUDP* pUDP, const IPAddress& server, double& offset, double& roundTrip)
+{
+    bool any = false;
+    for (int i = 0; i < 3; i++)
+    {
+        double sampleOffset, sampleRoundTrip;
+        if (!QueryNtpServer(pUDP, server, sampleOffset, sampleRoundTrip))
+            break;      // Unreachable or misbehaving: don't spend two more timeouts on it
+        if (!any || sampleRoundTrip < roundTrip)
+        {
+            offset    = sampleOffset;
+            roundTrip = sampleRoundTrip;
+            any       = true;
+        }
+    }
+    return any;
+}
+
+static DRAM_ATTR bool   l_bLastSyncLocal = false;
+static DRAM_ATTR double l_lastOffsetMs   = 0;
+static DRAM_ATTR double l_lastRoundTripMs = 0;
+static String           l_lastServer;
+
+bool NTPTimeClient::LastSyncWasLocal()  { return l_bLastSyncLocal; }
+double NTPTimeClient::LastOffsetMs()    { return l_lastOffsetMs; }
+double NTPTimeClient::LastRoundTripMs() { return l_lastRoundTripMs; }
+String NTPTimeClient::LastServer()      { return l_lastServer; }
+
 // UpdateClockFromWeb
 //
-// Obtains the time from the specified NTP Server and sets the ESP32 RTC to the result
+// Measures the clock against an NTP server and steers it. While LED-Central is sending frames
+// (any in the last two minutes) its host is the server, because frame timestamps come from its
+// clock and it's one hop away; if it doesn't answer, or isn't sending, the configured NTP server
+// is used instead.
+//
+// The first sync after boot, or an error over a second, steps the clock straight to the measured
+// time. Otherwise it moves a quarter of the offset per sync: a small step each time instead of
+// one big jump, which settles within a few milliseconds while absorbing the crystal's drift and
+// the odd noisy measurement.
 
 bool NTPTimeClient::UpdateClockFromWeb(WiFiUDP * pUDP)
 {
@@ -70,152 +204,65 @@ bool NTPTimeClient::UpdateClockFromWeb(WiFiUDP * pUDP)
         return false;
     }
 
-    debugV("Updating Clock From Web...");
-
     std::lock_guard guard(l_clockMutex);
 
-    char chNtpPacket[NTP_PACKET_LENGTH];
-    memset(chNtpPacket, 0, NTP_PACKET_LENGTH);
+    constexpr uint32_t kFrameSenderMaxAgeMs = 2 * 60 * 1000;
+    constexpr double   kStepThreshold       = 1.0;
+    constexpr double   kSlewFraction        = 0.25;
 
-    // Send ntp time request.
-    // Initialize ntp packet.
+    double offset = 0, roundTrip = 0;
+    bool measured = false;
+    bool local = false;
+    IPAddress server;
 
+    // A host that doesn't answer NTP (LED-Central's machine isn't serving it) is left alone for
+    // a while rather than costing a timeout on every sync.
+    constexpr uint32_t kLocalRetryMs = 10 * 60 * 1000;
+    static uint32_t s_localFailedMs = 0;
+    static bool s_localFailed = false;
 
-    // Set the ll (leap indicator), vvv (version number) and mmm (mode) bits.
-    //
-    //  These bits are contained in the first byte of chNtpPacker and are in
-    // the following format:  llvvvmmm
-    //
-    // where:
-    //
-    //    ll  (leap indicator) = 0
-    //    vvv (version number) = 3
-    //    mmm (mode)           = 3
-
-    chNtpPacket[0] = 0b00011011;
-
-    IPAddress ipNtpServer;
-    if (!nd_network::GetWiFiHostByName(g_ptrSystem->GetDeviceConfig().GetNTPServer().c_str(), ipNtpServer))
-        // Use Google Time (time.google.com) as default. The pool.ntp.org
-        // servers (IPs) don't necessarily last very long.
-        ipNtpServer.fromString("216.239.35.12");
-
-    // Send the ntp packet.
-    while (pUDP->parsePacket() != 0)
-        #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-            pUDP->clear();
-        #else
-            pUDP->flush();
-        #endif
-
-    if (!pUDP->beginPacket(ipNtpServer, 123))
+    uint32_t frameSender = 0;
+    if (GetRecentFrameSender(frameSender, kFrameSenderMaxAgeMs) && (!s_localFailed || millis() - s_localFailedMs > kLocalRetryMs))
     {
-        debugW("beginPacket failed in time set");
-        return false;
-    }
-
-    if (NTP_PACKET_LENGTH != pUDP->write((const uint8_t *)chNtpPacket, NTP_PACKET_LENGTH))
-    {
-        debugW("Could not write to UDP in time set");
-        return false;
-    }
-
-    if (!pUDP->endPacket())
-    {
-        debugW("EndPacket failed in time set.");
-        return false;
-    }
-
-    debugV("NTP clock: ntp packet sent to ntp server.");
-    debugV("NTP clock: awaiting response from ntp server");
-
-    int iPass = 0;
-    while (!pUDP->parsePacket())
-    {
-        #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-            pUDP->clear();
-        #else
-            pUDP->flush();
-        #endif
-        delay(100);
-        debugV(".");
-        if (iPass++ > 100)
+        server = IPAddress(frameSender);
+        measured = local = MeasureOffset(pUDP, server, offset, roundTrip);
+        s_localFailed = !measured;
+        if (!measured)
         {
-            debugW("NTP clock: TIMEOUT after 10 seconds of parsePacket!");
-            return false;
+            s_localFailedMs = millis();
+            debugW("NTP: LED-Central's host %s doesn't answer NTP; using the configured server for now", server.toString().c_str());
         }
     }
-    debugV("NTP clock: Time Received From Server...");
 
-    // Server responded, read the packet.
-
-    if (NTP_PACKET_LENGTH != pUDP->read(chNtpPacket, NTP_PACKET_LENGTH))
+    if (!measured)
     {
-        debugE("Unexpected number of bytes back from UDP read, so returning early");
+        if (!nd_network::GetWiFiHostByName(g_ptrSystem->GetDeviceConfig().GetNTPServer().c_str(), server))
+            // Use Google Time (time.google.com) as default. The pool.ntp.org
+            // servers (IPs) don't necessarily last very long.
+            server.fromString("216.239.35.12");
+        measured = MeasureOffset(pUDP, server, offset, roundTrip);
+    }
+
+    if (!measured)
         return false;
-    }
 
-    // Obtain the time from the packet, convert to Unix time, and adjust for the time zone.
+    const bool step = !l_bClockSet || std::abs(offset) > kStepThreshold;
+    const double correction = step ? offset : offset * kSlewFraction;
 
-    struct timeval tvNew;
-    memset(&tvNew, 0, sizeof(tvNew));
+    const double target = NowSeconds() + correction;
+    timeval tvNew;
+    tvNew.tv_sec  = (time_t) target;
+    tvNew.tv_usec = (suseconds_t) ((target - tvNew.tv_sec) * MICROS_PER_SECOND);
+    settimeofday(&tvNew, nullptr);
 
-    auto frac  =  (uint32_t) chNtpPacket[44] << 24
-                | (uint32_t) chNtpPacket[45] << 16
-                | (uint32_t) chNtpPacket[46] <<  8
-                | (uint32_t) chNtpPacket[47] <<  0;
-    auto microsecs = ((uint64_t) frac * 1000000) >> 32;
+    l_bLastSyncLocal  = local;
+    l_lastOffsetMs    = offset * 1000;
+    l_lastRoundTripMs = roundTrip * 1000;
+    l_lastServer      = server.toString();
 
-    // BUGBUG (davepl): I've been getting back odd packets where the clock is year 2036 and micros is 0. I ignore those.
-
-    if (microsecs == 0)
-    {
-        debugW("Bogus NTP time received, ignoring.");
-        return false;
-    }
-
-    debugW("NTP clock: Raw values sec=%lu, usec=%llu", (unsigned long)frac, microsecs);
-
-    tvNew.tv_sec = ((unsigned long)chNtpPacket[40] << 24) +       // bits 24 through 31 of ntp time
-        ((unsigned long)chNtpPacket[41] << 16) +                        // bits 16 through 23 of ntp time
-        ((unsigned long)chNtpPacket[42] << 8) +                         // bits  8 through 15 of ntp time
-        ((unsigned long)chNtpPacket[43]) -                              // bits  0 through  7 of ntp time
-        (((70UL * 365UL) + 17UL) * 86400UL);                            // ntp to unix conversion
-    tvNew.tv_usec = microsecs;
-
-    timeval tvOld;
-    gettimeofday(&tvOld, nullptr);
-
-    double dOld = tvOld.tv_sec + ((double) tvOld.tv_usec / MICROS_PER_SECOND);
-    double dNew = tvNew.tv_sec + ((double) tvNew.tv_usec / MICROS_PER_SECOND);
-
-    debugI("Old Time: %lf, New Time: %lf, Delta: %lf", dOld, dNew, abs(dNew - dOld));
-
-    // If the clock is off by more than a quarter second, update it
-
-    constexpr auto kMaxTimeDelta = 0.25;
-
-    auto delta = abs(dNew - dOld);
-    if (delta < kMaxTimeDelta)
-    {
-        debugI("Clock is only off by %lf so not updating the RTC.", delta);
-    }
-    else
-    {
-        debugI("Adjusting time by %lf to %lf", delta, dNew);
-        settimeofday(&tvNew, nullptr);                                 // Set the ESP32 rtc.
-    }
-
-    // Time has been received.
-    // Output date and time to serial.
-
-    char chBuffer[128];
-    struct tm * tmPointer = localtime(&tvNew.tv_sec);
-    strftime(chBuffer, sizeof(chBuffer), "%d %b %Y %H:%M:%S", tmPointer);
-    debugI("NTP clock: response received, updated time to: %lld.%lld, DELTA: %lf\n",
-            (long long)tvNew.tv_sec,
-            (long long)tvNew.tv_usec,
-            dNew - dOld );
+    debugI("NTP: %s %s offset %.1f ms (round trip %.1f ms), %s %.1f ms",
+           local ? "LED-Central" : "server", l_lastServer.c_str(), offset * 1000, roundTrip * 1000,
+           step ? "stepped" : "slewed", correction * 1000);
 
     l_bClockSet = true;  // Clock has been set at least once
 

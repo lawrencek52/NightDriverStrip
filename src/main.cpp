@@ -521,8 +521,9 @@ void setup()
         auto & networkReader = g_ptrSystem->SetupNetworkReader();
 
         #if ENABLE_NTP
-            // Register a network reader to update the device clock at regular intervals
-            networkReader.RegisterReader(nd_network::UpdateNTPTime, (NTP_DELAY_ERROR_SECONDS) * 1000UL);
+            // Register a network reader to update the device clock at regular intervals. It keeps
+            // running while LED-Central drives every channel, when the effect readers are paused.
+            networkReader.RegisterReader(nd_network::UpdateNTPTime, (NTP_DELAY_ERROR_SECONDS) * 1000UL, false, true);
         #endif
     #endif
 

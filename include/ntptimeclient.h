@@ -50,6 +50,13 @@ class NTPTimeClient
 
     static bool HasClockBeenSet();
     static bool UpdateClockFromWeb(WiFiUDP * pUDP);
+
+    // The last sync, for /statistics: whether it used LED-Central's host, the offset measured
+    // (positive = this clock was behind), the round trip, and the server's address.
+    static bool   LastSyncWasLocal();
+    static double LastOffsetMs();
+    static double LastRoundTripMs();
+    static String LastServer();
 };
 
 #endif // ENABLE_NTP

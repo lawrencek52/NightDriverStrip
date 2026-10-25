@@ -158,8 +158,9 @@ namespace nd_network
 
         // Add a reader to the collection. Returns the index of the added reader, for use with FlagReader().
         //   Note that if an interval (in ms) is specified, the reader will run for the first time after
-        //   the interval has passed, unless "true" is passed to the last parameter.
-        size_t RegisterReader(const std::function<void()> &reader, unsigned long interval = 0, bool flag = false);
+        //   the interval has passed, unless "true" is passed to the flag parameter. A reader registered with
+        //   runWhilePaused keeps running while SetReadersPaused() has the effect readers paused.
+        size_t RegisterReader(const std::function<void()> &reader, unsigned long interval = 0, bool flag = false, bool runWhilePaused = false);
 
         // Flag a reader for invocation and wake up the task that calls them
         void FlagReader(size_t index);
@@ -174,6 +175,8 @@ namespace nd_network
         // regardless. Used to stop paying for those effects' network fetches
         // while every channel is fully remote-driven and none of them are
         // even being drawn - see drawing.cpp's UpdateNetworkReadersForActiveEffects().
+        // Readers registered with runWhilePaused (the NTP clock sync) are exempt: remote-driven is
+        // exactly when the clock matters, since frames are shown by their timestamps.
         void SetReadersPaused(bool paused) { _readersPaused.store(paused); }
         bool AreReadersPaused() const { return _readersPaused.load(); }
 

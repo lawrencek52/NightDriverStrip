@@ -114,6 +114,7 @@ namespace nd_network
         std::atomic_ulong     lastReadMs;
         std::atomic_bool      flag = false;
         std::atomic_bool      canceled = false;
+        bool                  runWhilePaused = false;   // e.g. the NTP clock sync, which isn't an effect's fetch
 
         ReaderEntry(std::function<void()> r, unsigned long interval)
             : reader(std::move(r)), lastReadMs(0), readInterval(interval) {}
@@ -425,8 +426,14 @@ namespace nd_network
             static unsigned long lastUpdate = 0;
             if (IsWiFiConnected())
             {
-                // If we've already retrieved the time successfully, we'll only actually update every NTP_DELAY_SECONDS seconds
-                if (!NTPTimeClient::HasClockBeenSet() || (millis() - lastUpdate) > ((NTP_DELAY_SECONDS) * 1000))
+                // Once the time is set, resync every NTP_DELAY_SECONDS against the configured
+                // server, or every NTP_LOCAL_DELAY_SECONDS while LED-Central is sending frames
+                // (NTPTimeClient then uses its host, so frequent syncs cost nothing and keep
+                // every controller's frames lined up despite crystal drift).
+                uint32_t frameSender;
+                const unsigned long interval = GetRecentFrameSender(frameSender, NTP_DELAY_SECONDS * 1000UL)
+                                             ? NTP_LOCAL_DELAY_SECONDS : NTP_DELAY_SECONDS;
+                if (!NTPTimeClient::HasClockBeenSet() || (millis() - lastUpdate) > interval * 1000)
                 {
                     if (NTPTimeClient::UpdateClockFromWeb(&l_Udp))
                         lastUpdate = millis();
@@ -718,9 +725,10 @@ namespace nd_network
 
     // NetworkReader Implementation
 
-    size_t NetworkReader::RegisterReader(const std::function<void()> &reader, unsigned long interval, bool flag)
+    size_t NetworkReader::RegisterReader(const std::function<void()> &reader, unsigned long interval, bool flag, bool runWhilePaused)
     {
         auto entry = make_shared_internal<ReaderEntry>(reader, interval);
+        entry->runWhilePaused = runWhilePaused;
         readers.push_back(entry);
         if (interval) entry->lastReadMs.store(millis());
         if (flag) FlagReader(readers.size() - 1);
@@ -842,12 +850,13 @@ namespace nd_network
             // untouched) rather than skipped-but-still-ticking, so a reader that's
             // been paused for hours doesn't fire a burst of catch-up requests the
             // instant it's unpaused - it just resumes as if no time had passed.
-            if (!_readersPaused.load())
+            const bool paused = _readersPaused.load();
             {
                 for (auto &entryPtr : readers)
                 {
                     auto &entry = *entryPtr;
                     if (entry.canceled.load()) continue;
+                    if (paused && !entry.runWhilePaused) continue;
 
                     unsigned long interval = entry.readInterval.load();
                     if (interval)
