@@ -394,9 +394,6 @@ void setup()
     // issue, but do NOT lower it below 96 without testing every PSRAM env.
 
     #if USE_PSRAM && !defined(NO_PSRAM_DEFAULT)
-        #ifndef PSRAM_DEFAULT_THRESHOLD
-            #define PSRAM_DEFAULT_THRESHOLD 96
-        #endif
         heap_caps_malloc_extmem_enable(PSRAM_DEFAULT_THRESHOLD);
         debugI("PSRAM-default routing enabled at threshold %d bytes", (int)PSRAM_DEFAULT_THRESHOLD);
     #endif

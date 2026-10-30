@@ -543,12 +543,24 @@ public:
         if (rmt_config(&config) != ESP_OK) return false;
 
         // The legacy RMT RX driver creates its ringbuffer with xRingbufferCreate(),
-        // which uses default malloc. With PSRAM-default routing enabled that buffer
-        // can live in external RAM, so an IRAM ISR can crash if it fires while the
-        // flash/PSRAM cache is disabled. Remote input can tolerate dropped frames
-        // during flash writes, so keep this interrupt out of the cache-disabled path.
+        // which uses default malloc, so with PSRAM-default routing both the
+        // ringbuffer and its storage land in PSRAM. Passing 0 for the interrupt
+        // flags does not keep them out of the cache-disabled path: the legacy
+        // driver has one shared ISR for every RMT channel, registered with the
+        // flags of the first channel installed, and the WS281x output installs
+        // first with ESP_INTR_FLAG_IRAM. An IR pulse during a flash write then
+        // made the ISR spin on a PSRAM spinlock until the interrupt watchdog
+        // fired (deck3 2026-10-28, matrix-16x16 2026-10-25). So route this
+        // install's allocations to internal RAM.
 
-        if (rmt_driver_install(_channel, 1024, 0) != ESP_OK)
+#if USE_PSRAM && !defined(NO_PSRAM_DEFAULT)
+        heap_caps_malloc_extmem_enable(SIZE_MAX);
+#endif
+        const esp_err_t installResult = rmt_driver_install(_channel, 1024, 0);
+#if USE_PSRAM && !defined(NO_PSRAM_DEFAULT)
+        heap_caps_malloc_extmem_enable(PSRAM_DEFAULT_THRESHOLD);
+#endif
+        if (installResult != ESP_OK)
             return false;
 
         if (rmt_get_ringbuf_handle(_channel, &_ringbuf) != ESP_OK)

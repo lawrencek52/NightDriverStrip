@@ -628,7 +628,7 @@ namespace
             config.valid_gpio_num     = GPIO_NUM_NC;
             config.trans_queue_depth  = 1;
             config.max_transfer_size  = layout.frameBytes;
-            config.sample_edge        = PARLIO_SAMPLE_EDGE_POS;
+            config.shift_edge         = PARLIO_SHIFT_EDGE_NEG;   // was sample_edge = POS; same union value
             config.bit_pack_order     = PARLIO_BIT_PACK_ORDER_LSB;
 
             if (const auto error = parlio_new_tx_unit(&config, &_unit); error != ESP_OK)

@@ -30,9 +30,9 @@ class PatternSMPicasso3in1 : public EffectWithId<PatternSMPicasso3in1>
     static constexpr int trackingOBJECT_MAX_COUNT = 100U;
     // maximum number of tracked objects (greatly affects memory consumption)
     TrackingObject trackingObjects[trackingOBJECT_MAX_COUNT];
-    static constexpr int enlargedOBJECT_MAX_COUNT = (MATRIX_WIDTH * 2);
-    // maximum number of complex tracked objects
-    // (less than trackingOBJECT_MAX_COUNT)
+    // maximum number of complex tracked objects - capped at the trackingObjects
+    // size, which MATRIX_WIDTH * 2 overran on 64- and 128-wide matrices
+    static constexpr int enlargedOBJECT_MAX_COUNT = std::min(MATRIX_WIDTH * 2, trackingOBJECT_MAX_COUNT);
     uint8_t enlargedObjectNUM; // используемое в эффекте количество объектов
     long enlargedObjectTime[enlargedOBJECT_MAX_COUNT] {0};
     int _scale {-1};

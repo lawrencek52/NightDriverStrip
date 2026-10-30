@@ -298,12 +298,15 @@ uint16_t WiFiDraw()
     uint16_t pixelsDrawn = 0;
     size_t channel = 0;
 
+    // One "now" for every channel: the strips' frames share a timestamp, and reading
+    // the clock per channel let a wake just before it split one frame over two passes
+    // (later channels due, earlier ones not), showing each frame twice.
+    timeval tv;
+    gettimeofday(&tv, nullptr);
+
     for (auto& bufferManager : g_ptrSystem->GetBufferManagers())
     {
         const size_t thisChannel = channel++;
-
-        timeval tv;
-        gettimeofday(&tv, nullptr);
 
         // Pull buffers out of the queue.
 

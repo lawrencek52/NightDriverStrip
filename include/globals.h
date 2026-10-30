@@ -596,6 +596,12 @@ extern std::recursive_mutex g_effect_manager_mutex;
   #endif
 #endif
 
+// Plain malloc/new requests at or above this size go to PSRAM first (see
+// the PSRAM-default policy in main.cpp, and interfaces.h)
+#ifndef PSRAM_DEFAULT_THRESHOLD
+#define PSRAM_DEFAULT_THRESHOLD 96
+#endif
+
 #ifndef TIME_BEFORE_LOCAL
 #define TIME_BEFORE_LOCAL 5
 #endif
